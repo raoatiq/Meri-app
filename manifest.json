@@ -1,22 +1,42 @@
 {
   "name": "MyTracker",
   "short_name": "MyTracker",
-  "description": "Personal Daily Tracker",
-  "start_url": "/mytracker.html",
+  "description": "Personal Daily Tracker App",
+  "start_url": "/Meri-app/mytracker.html",
+  "scope": "/Meri-app/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#6C63FF",
   "theme_color": "#6C63FF",
-  "orientation": "portrait",
+  "lang": "en",
+  "categories": ["productivity", "lifestyle"],
   "icons": [
+    {
+      "src": "https://via.placeholder.com/72/6C63FF/ffffff?text=MT",
+      "sizes": "72x72",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/96/6C63FF/ffffff?text=MT",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/128/6C63FF/ffffff?text=MT",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
     {
       "src": "https://via.placeholder.com/192/6C63FF/ffffff?text=MT",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "https://via.placeholder.com/512/6C63FF/ffffff?text=MT",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
