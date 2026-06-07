@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>MyTracker</title>
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#6C63FF"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="MyTracker"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Segoe UI',system-ui,sans-serif;background:#F4F6FF;min-height:100vh;}
+    input,textarea,button{font-family:inherit;}
+    textarea{resize:vertical;}
+    .app{max-width:480px;margin:0 auto;min-height:100vh;position:relative;}
+  </style>
+</head>
+<body>
+<div id="root" class="app"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+// ── Storage (localStorage) ──
+window.storage = {
+  get: async function(key) {
+    try { const v = localStorage.getItem(key); return v !== null ? {key, value: v} : null; } catch { return null; }
+  },
+  set: async function(key, value) {
+    try { localStorage.setItem(key, value); return {key, value}; } catch { return null; }
+  },
+  delete: async function(key) {
+    try { localStorage.removeItem(key); return {key, deleted: true}; } catch { return null; }
+  },
+  list: async function(prefix) {
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!prefix || k.startsWith(prefix)) keys.push(k);
+      }
+      return {keys};
+    } catch { return {keys:[]}; }
+  }
+};
+
+// ── App ──
+const {useState, useEffect} = React;
+const _n = new Date();
+const TODAY = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,"0")}-${String(_n.getDate()).padStart(2,"0")}`;
+const DISPLAY_DATE = _n.toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+const TAB_COLORS = ["#6C63FF","#00C58E","#FF6B6B","#f59e0b"];
+const TAB_GRADS = [
+  "linear-gradient(135deg,#6C63FF 0%,#a855f7 100%)",
+  "linear-gradient(135deg,#00C58E 0%,#00a8cc 100%)",
+  "linear-gradient(135deg,#FF6B6B 0%,#feca57 100%)",
+  "linear-gradient(135deg,#f59e0b 0%,#ef4444 100%)"
+];
+const WD = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+
+function ds(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function defData(){
+  return {
+    habits:{walkSteps:"",sleepHours:"",nicotineCount:"",noFap:null,learning:null,socialMediaTime:""},
+    income:{salary:"",incentive:"",dividend:"",others:""},
+    expenses:{traveling:"",food:"",shopping:"",adjustment:"",internet:"",petrol:"",others:""},
+    assets:{bankAccount:"",mutualFunds:"",stock:"",crypto:"",plot:"",runningCash:"",others:""},
+    dayStatus:{workingArea:"",dailyNotes:""}
+  };
+}
+function hScore(d){
+  if(!d?.habits) return 0;
+  const h=d.habits;
+  return [h.noFap===true,h.learning===true,parseFloat(h.walkSteps)>0,
+    parseFloat(h.sleepHours)>=6,(h.nicotineCount===""||parseFloat(h.nicotineCount||"0")===0),
+    (h.socialMediaTime===""||parseFloat(h.socialMediaTime||"999")<120)].filter(Boolean).length;
+}
+function sColor(s){ return s>=5?"#10b981":s>=3?"#f59e0b":s>=1?"#ef4444":"#e5e7eb"; }
+function getMonthDays(y,m){
+  const fd=new Date(y,m,1).getDay(), dim=new Date(y,m+1,0).getDate();
+  return [...Array(fd).fill(null),...Array.from({length:dim},(_,i)=>new Date(y,m,i+1))];
+}
+
+function Card({title,color,children}){
+  return React.createElement('div',{style:{background:"white",borderRadius:16,padding:16,marginBottom:12,
+    boxShadow:"0 2px 12px rgba(0,0,0,0.05)",borderLeft:`4px solid ${color}`}},
+    React.createElement('div',{style:{fontSize:13,fontWeight:700,color,marginBottom:12}},title),
+    children);
+}
+
+function NF({label,value,onChange,icon,color}){
+  color = color||"#6C63FF";
+  const [f,setF]=useState(false);
+  return React.createElement('div',{style:{marginBottom:10}},
+    React.createElement('label',{style:{fontSize:11,color:"#888",display:"flex",alignItems:"center",gap:4,marginBottom:4}},
+      React.createElement('span',null,icon),label),
+    React.createElement('input',{type:"number",value,placeholder:"0",
+      onChange:e=>onChange(e.target.value),
+      onFocus:()=>setF(true),onBlur:()=>setF(false),
+      style:{width:"100%",padding:"9px 12px",borderRadius:10,border:`2px solid ${f?color:"#eee"}`,
+        fontSize:15,fontWeight:600,color:"#333",background:"#fafafa",outline:"none",
+        boxSizing:"border-box",transition:"border-color 0.2s"}}));
+}
+
+function AF({label,value,onChange,icon,color}){
+  color = color||"#00C58E";
+  const [f,setF]=useState(false);
+  return React.createElement('div',{style:{marginBottom:10}},
+    React.createElement('label',{style:{fontSize:11,color:"#888",display:"flex",alignItems:"center",gap:4,marginBottom:4}},
+      React.createElement('span',null,icon),label),
+    React.createElement('div',{style:{position:"relative"}},
+      React.createElement('span',{style:{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#bbb",fontSize:13}},"₨"),
+      React.createElement('input',{type:"number",value,placeholder:"0",
+        onChange:e=>onChange(e.target.value),
+        onFocus:()=>setF(true),onBlur:()=>setF(false),
+        style:{width:"100%",padding:"9px 12px 9px 26px",borderRadius:10,border:`2px solid ${f?color:"#eee"}`,
+          fontSize:15,fontWeight:600,color:"#333",background:"#fafafa",outline:"none",
+          boxSizing:"border-box",transition:"border-color 0.2s"}})));
+}
+
+function TG({label,value,onChange,icon}){
+  return React.createElement('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",
+    padding:"10px 12px",background:"#fafafa",borderRadius:10,marginBottom:10}},
+    React.createElement('div',{style:{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"#333"}},
+      React.createElement('span',null,icon),label),
+    React.createElement('div',{style:{display:"flex",gap:6}},
+      [true,false].map(v=>
+        React.createElement('button',{key:String(v),onClick:()=>onChange(v),
+          style:{padding:"5px 13px",borderRadius:8,border:"none",fontSize:12,fontWeight:700,
+            cursor:"pointer",transition:"all 0.15s",
+            background:value===v?(v?"#10b981":"#ef4444"):"#e8e8e8",
+            color:value===v?"white":"#888"}},v?"Yes":"No")
+      )
+    )
+  );
+}
+
+function App(){
+  const [screen,setScreen]=useState("loading");
+  const [storedPin,setStoredPin]=useState("");
+  const [pinStep,setPinStep]=useState(1);
+  const [firstPin,setFirstPin]=useState("");
+  const [pinCur,setPinCur]=useState("");
+  const [pinErr,setPinErr]=useState("");
+  const [tab,setTab]=useState(0);
+  const [googleOn,setGoogleOn]=useState(false);
+  const [syncing,setSyncing]=useState(false);
+  const [data,setData]=useState(defData());
+  const [allData,setAllData]=useState({});
+  const [saved,setSaved]=useState(false);
+  const [calY,setCalY]=useState(_n.getFullYear());
+  const [calM,setCalM]=useState(_n.getMonth());
+  const [selDay,setSelDay]=useState(null);
+
+  useEffect(()=>{init();},[]);
+
+  async function init(){
+    try{const p=await window.storage.get("app_pin");
+      if(p?.value){setStoredPin(p.value);setScreen("login");}else setScreen("setup");}
+    catch{setScreen("setup");}
+    try{const g=await window.storage.get("google_on");if(g?.value==="1")setGoogleOn(true);}catch{}
+    try{
+      const keys=await window.storage.list("day_");
+      const ad={};
+      for(const k of(keys?.keys||[])){
+        try{const v=await window.storage.get(k);if(v?.value)ad[k.replace("day_","")]=JSON.parse(v.value);}catch{}
+      }
+      setAllData(ad);
+      if(ad[TODAY])setData(ad[TODAY]);
+    }catch{}
+  }
+
+  async function saveData(nd){
+    setData(nd);
+    setAllData(prev=>({...prev,[TODAY]:nd}));
+    try{await window.storage.set("day_"+TODAY,JSON.stringify(nd));
+      setSaved(true);setTimeout(()=>setSaved(false),1800);}catch{}
+  }
+
+  function upd(sec,key,val){saveData({...data,[sec]:{...data[sec],[key]:val}});}
+
+  function tapDigit(d){
+    setPinErr("");
+    if(pinCur.length>=4)return;
+    const next=pinCur+d; setPinCur(next);
+    if(next.length<4)return;
+    setTimeout(()=>{
+      if(screen==="setup"){
+        if(pinStep===1){setFirstPin(next);setPinCur("");setPinStep(2);}
+        else{
+          if(next===firstPin){window.storage.set("app_pin",next);setStoredPin(next);
+            setPinCur("");setFirstPin("");setPinStep(1);setScreen("main");}
+          else{setPinErr("PINs don't match.");setPinCur("");setFirstPin("");setPinStep(1);}
+        }
+      }else{
+        if(next===storedPin){setPinCur("");setScreen("main");}
+        else{setPinErr("Incorrect PIN!");setPinCur("");}
+      }
+    },140);
+  }
+  function tapBack(){setPinErr("");setPinCur(p=>p.slice(0,-1));}
+
+  async function toggleGoogle(){
+    if(googleOn){await window.storage.set("google_on","0");setGoogleOn(false);return;}
+    setSyncing(true);await new Promise(r=>setTimeout(r,1600));
+    await window.storage.set("google_on","1");setGoogleOn(true);setSyncing(false);
+  }
+
+  function calcStreak(){
+    const d=new Date(_n);let streak=0;
+    for(let i=0;i<365;i++){
+      if(hScore(allData[ds(d)])===0)break;
+      streak++;d.setDate(d.getDate()-1);
+    }
+    return streak;
+  }
+
+  const e = React.createElement;
+
+  // ── LOADING ──
+  if(screen==="loading") return e('div',{style:{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:TAB_GRADS[0]}},
+    e('div',{style:{fontSize:48}},"📊"));
+
+  // ── PIN SCREEN ──
+  if(screen==="setup"||screen==="login"){
+    const dots=pinCur.length;
+    return e('div',{style:{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",
+      justifyContent:"center",padding:20,
+      background:"linear-gradient(160deg,#6C63FF 0%,#a855f7 40%,#ec4899 100%)",
+      fontFamily:"'Segoe UI',system-ui,sans-serif"}},
+      e('div',{style:{marginBottom:24,textAlign:"center"}},
+        e('div',{style:{width:76,height:76,borderRadius:22,background:"rgba(255,255,255,0.2)",
+          display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px",fontSize:36}},"📊"),
+        e('div',{style:{color:"white",fontSize:26,fontWeight:800}},"MyTracker"),
+        e('div',{style:{color:"rgba(255,255,255,0.7)",fontSize:12}},"Personal Daily Tracker")
+      ),
+      e('div',{style:{background:"rgba(255,255,255,0.97)",borderRadius:28,padding:"28px 22px",
+        width:"100%",maxWidth:320,boxShadow:"0 24px 60px rgba(0,0,0,0.25)"}},
+        e('div',{style:{textAlign:"center",marginBottom:6}},
+          e('div',{style:{fontSize:17,fontWeight:700,color:"#222"}},
+            screen==="setup"?(pinStep===1?"🔐 Create PIN":"🔐 Confirm PIN"):"🔐 Enter PIN"),
+          e('div',{style:{fontSize:12,color:"#999",marginTop:3}},
+            screen==="setup"?(pinStep===1?"Choose a 4-digit PIN":"Re-enter to confirm"):"Enter your 4-digit PIN")
+        ),
+        e('div',{style:{display:"flex",justifyContent:"center",gap:12,margin:"18px 0"}},
+          [0,1,2,3].map(i=>e('div',{key:i,style:{width:15,height:15,borderRadius:"50%",
+            background:i<dots?"#6C63FF":"rgba(108,99,255,0.15)",
+            border:`2.5px solid ${i<dots?"#6C63FF":"rgba(108,99,255,0.25)"}`,
+            transition:"all 0.15s",transform:i<dots?"scale(1.15)":"scale(1)"}}))
+        ),
+        pinErr&&e('div',{style:{background:"#fff5f5",border:"1px solid #fed7d7",borderRadius:10,
+          padding:"7px 12px",color:"#e53e3e",fontSize:12,textAlign:"center",marginBottom:10}},pinErr),
+        e('div',{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}},
+          [1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>
+            e('button',{key:i,onClick:()=>d==="⌫"?tapBack():d!==""?tapDigit(String(d)):null,
+              style:{height:54,borderRadius:12,border:"none",fontSize:d==="⌫"?18:20,fontWeight:600,
+                background:d==="⌫"?"#fee2e2":d===""?"transparent":"#f5f5ff",
+                color:d==="⌫"?"#e53e3e":"#333",cursor:d===""?"default":"pointer",
+                boxShadow:d!==""&&d!=="⌫"?"0 2px 5px rgba(0,0,0,0.06)":"none"}},d)
+          )
+        )
+      )
+    );
+  }
+
+  // ── MAIN APP ──
+  const TABS=[{icon:"🎯",label:"Habits"},{icon:"💰",label:"Finance"},{icon:"📅",label:"Day Status"},{icon:"📆",label:"Calendar"}];
+  const totInc=Object.values(data.income).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totExp=Object.values(data.expenses).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totAst=Object.values(data.assets).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const streak=calcStreak();
+  const last7=Array.from({length:7},(_,i)=>{const d=new Date(_n);d.setDate(d.getDate()-(6-i));return d;});
+  const calDays=getMonthDays(calY,calM);
+  const calMonthName=new Date(calY,calM,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+  const selData=selDay?allData[selDay]:null;
+  const selScore=hScore(selData);
+  const selInc=selData?Object.values(selData.income||{}).reduce((s,v)=>s+(parseFloat(v)||0),0):0;
+  const selExp=selData?Object.values(selData.expenses||{}).reduce((s,v)=>s+(parseFloat(v)||0),0):0;
+  const score=hScore(data);
+
+  return e('div',{style:{minHeight:"100vh",background:"#F4F6FF",fontFamily:"'Segoe UI',system-ui,sans-serif",maxWidth:480,margin:"0 auto"}},
+
+    // Header
+    e('div',{style:{background:TAB_GRADS[tab],padding:"18px 18px 50px",borderRadius:"0 0 28px 28px"}},
+      e('div',{style:{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}},
+        e('div',null,
+          e('div',{style:{color:"rgba(255,255,255,0.75)",fontSize:11}},DISPLAY_DATE),
+          e('div',{style:{color:"white",fontSize:21,fontWeight:800,marginTop:2}},TABS[tab].icon+" "+TABS[tab].label)
+        ),
+        e('div',{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}},
+          saved&&e('div',{style:{background:"rgba(255,255,255,0.25)",borderRadius:12,padding:"3px 9px",color:"white",fontSize:10,fontWeight:700}},"✓ Saved"),
+          e('button',{onClick:toggleGoogle,style:{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:14,
+            padding:"5px 10px",color:"white",fontSize:10,fontWeight:700,cursor:"pointer"}},
+            syncing?"⏳ Syncing...":googleOn?"🔗 Synced":"🔗 Sync")
+        )
+      )
+    ),
+
+    // Content
+    e('div',{style:{padding:"0 12px 100px",marginTop:-28}},
+
+      // Finance summary cards
+      tab===1&&e('div',{style:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:12}},
+        [{l:"Income",v:totInc,c:"#00C58E",i:"💵"},{l:"Expenses",v:totExp,c:"#FF6B6B",i:"💸"},
+         {l:"Savings",v:totInc-totExp,c:totInc-totExp>=0?"#6C63FF":"#ef4444",i:"💾"},{l:"Assets",v:totAst,c:"#a855f7",i:"🏦"}]
+        .map(s=>e('div',{key:s.l,style:{background:"white",borderRadius:14,padding:"10px 12px",
+          boxShadow:"0 2px 10px rgba(0,0,0,0.06)",textAlign:"center"}},
+          e('div',{style:{fontSize:18}},s.i),
+          e('div',{style:{fontSize:10,color:"#999",marginTop:2}},s.l),
+          e('div',{style:{fontSize:13,fontWeight:800,color:s.c,marginTop:1}},"₨"+Math.abs(s.v).toLocaleString())
+        ))
+      ),
+
+      e('div',{style:{background:"white",borderRadius:22,padding:14,boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}},
+
+        // ── HABITS ──
+        tab===0&&e(React.Fragment,null,
+          // Week Streak
+          e('div',{style:{background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:18,padding:16,marginBottom:14}},
+            e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
+              e('div',{style:{color:"white",fontSize:13,fontWeight:700}},"🔥 Current Streak"),
+              e('div',{style:{background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 14px",display:"flex",alignItems:"baseline",gap:3}},
+                e('span',{style:{color:"white",fontSize:22,fontWeight:800}},streak),
+                e('span',{style:{color:"rgba(255,255,255,0.7)",fontSize:11}}," days")
+              )
+            ),
+            e('div',{style:{display:"flex",justifyContent:"space-around"}},
+              last7.map(d=>{
+                const key=ds(d),dd=allData[key],sc=hScore(dd),isT=key===TODAY;
+                return e('div',{key,style:{display:"flex",flexDirection:"column",alignItems:"center",gap:4}},
+                  e('div',{style:{color:"rgba(255,255,255,0.6)",fontSize:9,fontWeight:700}},
+                    d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,2).toUpperCase()),
+                  e('div',{style:{width:34,height:34,borderRadius:"50%",
+                    background:dd?sColor(sc):"rgba(255,255,255,0.12)",
+                    border:`2.5px solid ${isT?"white":"rgba(255,255,255,0.2)"}`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize:13,fontWeight:800,color:"white"}},
+                    dd?(sc>=5?"✓":sc>=3?"~":"!"):d.getDate()),
+                  isT&&e('div',{style:{width:5,height:5,borderRadius:"50%",background:"white"}})
+                );
+              })
+            ),
+            e('div',{style:{display:"flex",justifyContent:"center",gap:14,marginTop:10}},
+              [{c:"#10b981",l:"Great"},{c:"#f59e0b",l:"OK"},{c:"#ef4444",l:"Weak"}].map(s=>
+                e('div',{key:s.l,style:{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"rgba(255,255,255,0.7)"}},
+                  e('div',{style:{width:7,height:7,borderRadius:"50%",background:s.c}}),s.l)
+              )
+            )
+          ),
+
+          e(Card,{title:"🚶 Physical Activity",color:"#6C63FF"},
+            e(NF,{label:"Walk Steps",value:data.habits.walkSteps,onChange:v=>upd("habits","walkSteps",v),icon:"👣",color:"#6C63FF"}),
+            e(NF,{label:"Sleep Hours",value:data.habits.sleepHours,onChange:v=>upd("habits","sleepHours",v),icon:"😴",color:"#6C63FF"})
+          ),
+          e(Card,{title:"🧠 Mental Health",color:"#a855f7"},
+            e(NF,{label:"Nicotine Count",value:data.habits.nicotineCount,onChange:v=>upd("habits","nicotineCount",v),icon:"🚬",color:"#a855f7"}),
+            e(TG,{label:"No FAP",value:data.habits.noFap,onChange:v=>upd("habits","noFap",v),icon:"💪"}),
+            e(TG,{label:"Learning",value:data.habits.learning,onChange:v=>upd("habits","learning",v),icon:"📚"})
+          ),
+          e(Card,{title:"📱 Screen Time",color:"#ec4899"},
+            e(NF,{label:"Social Media Time (mins)",value:data.habits.socialMediaTime,onChange:v=>upd("habits","socialMediaTime",v),icon:"📲",color:"#ec4899"})
+          ),
+
+          // Today Score
+          e('div',{style:{background:"linear-gradient(135deg,#ec4899,#8b5cf6)",borderRadius:16,padding:14}},
+            e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,fontWeight:700,marginBottom:8}},"TODAY'S SCORE"),
+            e('div',{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+              e('div',{style:{fontSize:26,fontWeight:800,color:"white"}},score+"/6"),
+              e('div',{style:{flex:1,height:8,background:"rgba(255,255,255,0.2)",borderRadius:4,overflow:"hidden"}},
+                e('div',{style:{width:`${(score/6)*100}%`,height:"100%",background:"white",borderRadius:4,transition:"width 0.3s"}})
+              )
+            ),
+            e('div',{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}},
+              [{l:"Steps",v:data.habits.walkSteps||"—",u:"steps",i:"👣"},
+               {l:"Sleep",v:data.habits.sleepHours||"—",u:"h",i:"😴"},
+               {l:"Screen",v:data.habits.socialMediaTime||"—",u:"m",i:"📱"},
+               {l:"Nicotine",v:data.habits.nicotineCount||"0",u:"",i:"🚬"},
+               {l:"No FAP",v:data.habits.noFap===true?"YES":data.habits.noFap===false?"NO":"—",u:"",i:"💪"},
+               {l:"Learning",v:data.habits.learning===true?"YES":data.habits.learning===false?"NO":"—",u:"",i:"📚"}
+              ].map(s=>e('div',{key:s.l,style:{background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"7px 8px",textAlign:"center"}},
+                e('div',{style:{fontSize:14}},s.i),
+                e('div',{style:{color:"white",fontSize:11,fontWeight:700}},s.v+(s.v!=="—"&&s.u?" "+s.u:"")),
+                e('div',{style:{color:"rgba(255,255,255,0.6)",fontSize:9}},s.l)
+              ))
+            )
+          )
+        ),
+
+        // ── FINANCE ──
+        tab===1&&e(React.Fragment,null,
+          e(Card,{title:"💵 Income",color:"#00C58E"},
+            e(AF,{label:"Salary",value:data.income.salary,onChange:v=>upd("income","salary",v),icon:"🏦",color:"#00C58E"}),
+            e(AF,{label:"Incentive",value:data.income.incentive,onChange:v=>upd("income","incentive",v),icon:"🎁",color:"#00C58E"}),
+            e(AF,{label:"Dividend",value:data.income.dividend,onChange:v=>upd("income","dividend",v),icon:"📈",color:"#00C58E"}),
+            e(AF,{label:"Others",value:data.income.others,onChange:v=>upd("income","others",v),icon:"➕",color:"#00C58E"})
+          ),
+          e(Card,{title:"💸 Expenses",color:"#FF6B6B"},
+            e(AF,{label:"Traveling",value:data.expenses.traveling,onChange:v=>upd("expenses","traveling",v),icon:"🚗",color:"#FF6B6B"}),
+            e(AF,{label:"Food",value:data.expenses.food,onChange:v=>upd("expenses","food",v),icon:"🍔",color:"#FF6B6B"}),
+            e(AF,{label:"Shopping",value:data.expenses.shopping,onChange:v=>upd("expenses","shopping",v),icon:"🛍️",color:"#FF6B6B"}),
+            e(AF,{label:"Adjustment",value:data.expenses.adjustment,onChange:v=>upd("expenses","adjustment",v),icon:"🔄",color:"#FF6B6B"}),
+            e(AF,{label:"Internet",value:data.expenses.internet,onChange:v=>upd("expenses","internet",v),icon:"🌐",color:"#FF6B6B"}),
+            e(AF,{label:"Petrol",value:data.expenses.petrol,onChange:v=>upd("expenses","petrol",v),icon:"⛽",color:"#FF6B6B"}),
+            e(AF,{label:"Others",value:data.expenses.others,onChange:v=>upd("expenses","others",v),icon:"➕",color:"#FF6B6B"})
+          ),
+          e(Card,{title:"🏦 Assets",color:"#6C63FF"},
+            e(AF,{label:"Bank Account",value:data.assets.bankAccount,onChange:v=>upd("assets","bankAccount",v),icon:"🏦",color:"#6C63FF"}),
+            e(AF,{label:"Mutual Funds",value:data.assets.mutualFunds,onChange:v=>upd("assets","mutualFunds",v),icon:"📊",color:"#6C63FF"}),
+            e(AF,{label:"Stock",value:data.assets.stock,onChange:v=>upd("assets","stock",v),icon:"📈",color:"#6C63FF"}),
+            e(AF,{label:"Crypto",value:data.assets.crypto,onChange:v=>upd("assets","crypto",v),icon:"₿",color:"#6C63FF"}),
+            e(AF,{label:"Plot",value:data.assets.plot,onChange:v=>upd("assets","plot",v),icon:"🏗️",color:"#6C63FF"}),
+            e(AF,{label:"Running Cash",value:data.assets.runningCash,onChange:v=>upd("assets","runningCash",v),icon:"💵",color:"#6C63FF"}),
+            e(AF,{label:"Others",value:data.assets.others,onChange:v=>upd("assets","others",v),icon:"➕",color:"#6C63FF"})
+          )
+        ),
+
+        // ── DAY STATUS ──
+        tab===2&&e(React.Fragment,null,
+          e(Card,{title:"🏢 Working Area",color:"#FF6B6B"},
+            e('textarea',{value:data.dayStatus.workingArea,onChange:ev=>upd("dayStatus","workingArea",ev.target.value),
+              placeholder:"Tasks completed, meetings, progress made today...",rows:5,
+              style:{width:"100%",borderRadius:10,border:"2px solid #eee",padding:"10px 12px",
+                fontSize:14,lineHeight:1.7,color:"#333",background:"#fafafa",
+                resize:"vertical",outline:"none",boxSizing:"border-box",fontFamily:"inherit"}})
+          ),
+          e(Card,{title:"📝 Daily Notes",color:"#feca57"},
+            e('textarea',{value:data.dayStatus.dailyNotes,onChange:ev=>upd("dayStatus","dailyNotes",ev.target.value),
+              placeholder:"Your thoughts, ideas, reflections for today...",rows:6,
+              style:{width:"100%",borderRadius:10,border:"2px solid #eee",padding:"10px 12px",
+                fontSize:14,lineHeight:1.7,color:"#333",background:"#fafafa",
+                resize:"vertical",outline:"none",boxSizing:"border-box",fontFamily:"inherit"}})
+          ),
+          (data.dayStatus.workingArea||data.dayStatus.dailyNotes)&&
+          e('div',{style:{background:"linear-gradient(135deg,#FF6B6B,#feca57)",borderRadius:14,padding:14}},
+            e('div',{style:{color:"white",fontSize:12,fontWeight:700,marginBottom:8}},"📌 Word Count"),
+            e('div',{style:{display:"flex",gap:10}},
+              [{l:"Working Area",v:data.dayStatus.workingArea},{l:"Daily Notes",v:data.dayStatus.dailyNotes}].map(s=>
+                e('div',{key:s.l,style:{flex:1,background:"rgba(255,255,255,0.2)",borderRadius:10,padding:"8px 10px"}},
+                  e('div',{style:{color:"white",fontSize:18,fontWeight:800}},
+                    s.v.trim().split(/\s+/).filter(Boolean).length),
+                  e('div',{style:{color:"rgba(255,255,255,0.75)",fontSize:10}},s.l)
+                )
+              )
+            )
+          )
+        ),
+
+        // ── CALENDAR ──
+        tab===3&&e(React.Fragment,null,
+          e('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}},
+            e('button',{onClick:()=>{let m=calM-1,y=calY;if(m<0){m=11;y--;}setCalM(m);setCalY(y);},
+              style:{width:36,height:36,borderRadius:10,border:"none",background:"#f0f0ff",
+                color:"#6C63FF",fontSize:18,fontWeight:800,cursor:"pointer"}},"‹"),
+            e('div',{style:{fontWeight:700,fontSize:15,color:"#333"}},calMonthName),
+            e('button',{onClick:()=>{let m=calM+1,y=calY;if(m>11){m=0;y++;}setCalM(m);setCalY(y);},
+              style:{width:36,height:36,borderRadius:10,border:"none",background:"#f0f0ff",
+                color:"#6C63FF",fontSize:18,fontWeight:800,cursor:"pointer"}},"›")
+          ),
+          e('div',{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:4}},
+            WD.map(d=>e('div',{key:d,style:{textAlign:"center",fontSize:10,fontWeight:700,color:"#aaa",padding:"3px 0"}},d))
+          ),
+          e('div',{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}},
+            calDays.map((d,i)=>{
+              if(!d)return e('div',{key:i});
+              const key=ds(d),dd=allData[key],sc=hScore(dd);
+              const isT=key===TODAY,isFut=key>TODAY;
+              const hasFin=dd&&(Object.values(dd.income||{}).some(v=>parseFloat(v)>0)||Object.values(dd.expenses||{}).some(v=>parseFloat(v)>0));
+              const hasNote=dd&&(dd.dayStatus?.workingArea||dd.dayStatus?.dailyNotes);
+              return e('button',{key,onClick:()=>dd&&!isFut&&setSelDay(key),
+                style:{aspectRatio:"1",borderRadius:10,border:"none",
+                  background:isFut?"#f9fafb":dd?sColor(sc)+"22":"white",
+                  cursor:dd&&!isFut?"pointer":"default",
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                  padding:2,boxShadow:"0 1px 4px rgba(0,0,0,0.06)",
+                  outline:isT?"2.5px solid #6C63FF":"none"}},
+                e('div',{style:{fontSize:11,fontWeight:isT?800:600,color:isT?"#6C63FF":isFut?"#d1d5db":"#333"}},d.getDate()),
+                dd&&!isFut&&e('div',{style:{width:5,height:5,borderRadius:"50%",background:sColor(sc),marginTop:1}}),
+                (hasFin||hasNote)&&!isFut&&e('div',{style:{display:"flex",gap:1,marginTop:1}},
+                  hasFin&&e('div',{style:{width:3,height:3,borderRadius:1,background:"#00C58E"}}),
+                  hasNote&&e('div',{style:{width:3,height:3,borderRadius:1,background:"#f59e0b"}})
+                )
+              );
+            })
+          ),
+          // Legend
+          e('div',{style:{marginTop:14,padding:"12px 14px",background:"#fafafa",borderRadius:14}},
+            e('div',{style:{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}},"Legend — tap a day for details"),
+            e('div',{style:{display:"flex",flexWrap:"wrap",gap:8}},
+              [{c:"#10b981",l:"Great (5-6)",r:true},{c:"#f59e0b",l:"OK (3-4)",r:true},
+               {c:"#ef4444",l:"Weak (1-2)",r:true},{c:"#00C58E",l:"Finance",r:false},{c:"#f59e0b",l:"Notes",r:false}]
+              .map(s=>e('div',{key:s.l,style:{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#666"}},
+                e('div',{style:{width:s.r?8:6,height:s.r?8:6,borderRadius:s.r?"50%":2,background:s.c}}),s.l
+              ))
+            )
+          ),
+          // Monthly stats
+          (()=>{
+            const ms=`${calY}-${String(calM+1).padStart(2,"0")}`;
+            const mk=Object.keys(allData).filter(k=>k.startsWith(ms));
+            if(!mk.length)return e('div',{style:{marginTop:12,padding:14,background:"#fafafa",borderRadius:14,textAlign:"center",color:"#aaa",fontSize:13}},"No data for this month yet.");
+            const gd=mk.filter(k=>hScore(allData[k])>=5).length;
+            const mi=mk.reduce((s,k)=>s+Object.values(allData[k].income||{}).reduce((a,v)=>a+(parseFloat(v)||0),0),0);
+            const me=mk.reduce((s,k)=>s+Object.values(allData[k].expenses||{}).reduce((a,v)=>a+(parseFloat(v)||0),0),0);
+            return e('div',{style:{marginTop:12,background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:16,padding:14}},
+              e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,fontWeight:700,marginBottom:10}},"📊 MONTH STATS"),
+              e('div',{style:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}},
+                [{l:"Days Tracked",v:mk.length,i:"📅"},{l:"Great Days",v:gd,i:"⭐"},
+                 {l:"Month Income",v:"₨"+mi.toLocaleString(),i:"💵"},{l:"Month Expenses",v:"₨"+me.toLocaleString(),i:"💸"}]
+                .map(s=>e('div',{key:s.l,style:{background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"9px 12px"}},
+                  e('div',{style:{fontSize:16}},s.i),
+                  e('div',{style:{color:"white",fontSize:14,fontWeight:800,marginTop:2}},s.v),
+                  e('div',{style:{color:"rgba(255,255,255,0.65)",fontSize:10}},s.l)
+                ))
+              )
+            );
+          })()
+        )
+      )
+    ),
+
+    // Bottom Nav
+    e('div',{style:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
+      width:"100%",maxWidth:480,background:"white",borderTop:"1px solid #f0f0f0",
+      display:"flex",padding:"8px 0 16px",boxShadow:"0 -4px 20px rgba(0,0,0,0.07)"}},
+      TABS.map((t,i)=>e('button',{key:i,onClick:()=>setTab(i),style:{flex:1,border:"none",background:"transparent",
+        cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 0"}},
+        e('div',{style:{fontSize:19,opacity:tab===i?1:0.4,transform:tab===i?"scale(1.15)":"scale(1)",transition:"all 0.2s"}},t.icon),
+        e('div',{style:{fontSize:9,fontWeight:700,color:tab===i?TAB_COLORS[i]:"#bbb"}},t.label),
+        tab===i&&e('div',{style:{width:4,height:4,borderRadius:"50%",background:TAB_COLORS[i]}})
+      ))
+    ),
+
+    // Day Detail Modal
+    selDay&&selData&&e('div',{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:100,
+      display:"flex",alignItems:"flex-end",justifyContent:"center"},onClick:()=>setSelDay(null)},
+      e('div',{style:{background:"white",borderRadius:"24px 24px 0 0",padding:24,width:"100%",maxWidth:480,
+        maxHeight:"78vh",overflowY:"auto"},onClick:ev=>ev.stopPropagation()},
+        e('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
+          e('div',null,
+            e('div',{style:{fontSize:11,color:"#aaa"}},
+              new Date(selDay+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})),
+            e('div',{style:{fontSize:18,fontWeight:800,color:"#333",marginTop:2}},"Day Summary")
+          ),
+          e('button',{onClick:()=>setSelDay(null),
+            style:{background:"#f0f0f0",border:"none",borderRadius:20,width:32,height:32,cursor:"pointer",fontSize:16}},"×")
+        ),
+        e('div',{style:{background:sColor(selScore)+"18",border:`2px solid ${sColor(selScore)}`,
+          borderRadius:14,padding:14,marginBottom:14}},
+          e('div',{style:{fontSize:11,color:"#666",marginBottom:6}},"🎯 Habit Score"),
+          e('div',{style:{display:"flex",alignItems:"center",gap:10}},
+            e('div',{style:{fontSize:26,fontWeight:800,color:sColor(selScore)}},selScore+"/6"),
+            e('div',{style:{flex:1,height:8,background:"#eee",borderRadius:4,overflow:"hidden"}},
+              e('div',{style:{width:`${(selScore/6)*100}%`,height:"100%",background:sColor(selScore),borderRadius:4}})
+            )
+          )
+        ),
+        e('div',{style:{marginBottom:14}},
+          e('div',{style:{fontSize:12,fontWeight:700,color:"#333",marginBottom:8}},"Habits"),
+          e('div',{style:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}},
+            [{l:"Walk Steps",v:selData.habits?.walkSteps?selData.habits.walkSteps+" steps":"—",i:"👣"},
+             {l:"Sleep",v:selData.habits?.sleepHours?selData.habits.sleepHours+" hrs":"—",i:"😴"},
+             {l:"Nicotine",v:selData.habits?.nicotineCount!==undefined?(selData.habits.nicotineCount||"0"):"—",i:"🚬"},
+             {l:"Social Media",v:selData.habits?.socialMediaTime?selData.habits.socialMediaTime+" min":"—",i:"📱"},
+             {l:"No FAP",v:selData.habits?.noFap===true?"✓ Yes":selData.habits?.noFap===false?"✗ No":"—",i:"💪"},
+             {l:"Learning",v:selData.habits?.learning===true?"✓ Yes":selData.habits?.learning===false?"✗ No":"—",i:"📚"}
+            ].map(s=>e('div',{key:s.l,style:{background:"#fafafa",borderRadius:10,padding:"8px 10px"}},
+              e('div',{style:{fontSize:10,color:"#aaa"}},s.i+" "+s.l),
+              e('div',{style:{fontSize:13,fontWeight:700,color:"#333",marginTop:2}},s.v)
+            ))
+          )
+        ),
+        (selInc>0||selExp>0)&&e('div',{style:{marginBottom:14}},
+          e('div',{style:{fontSize:12,fontWeight:700,color:"#333",marginBottom:8}},"Finance"),
+          e('div',{style:{display:"flex",gap:8}},
+            e('div',{style:{flex:1,background:"#f0fdf4",borderRadius:10,padding:"10px 12px"}},
+              e('div',{style:{fontSize:10,color:"#666"}},"💵 Income"),
+              e('div',{style:{fontSize:15,fontWeight:800,color:"#00C58E"}},"₨"+selInc.toLocaleString())
+            ),
+            e('div',{style:{flex:1,background:"#fff5f5",borderRadius:10,padding:"10px 12px"}},
+              e('div',{style:{fontSize:10,color:"#666"}},"💸 Expenses"),
+              e('div',{style:{fontSize:15,fontWeight:800,color:"#FF6B6B"}},"₨"+selExp.toLocaleString())
+            )
+          )
+        ),
+        (selData.dayStatus?.workingArea||selData.dayStatus?.dailyNotes)&&e('div',null,
+          e('div',{style:{fontSize:12,fontWeight:700,color:"#333",marginBottom:8}},"Notes"),
+          selData.dayStatus.workingArea&&e('div',{style:{background:"#fafafa",borderRadius:10,padding:"10px 12px",marginBottom:8}},
+            e('div',{style:{fontSize:10,color:"#aaa",marginBottom:4}},"🏢 Working Area"),
+            e('div',{style:{fontSize:12,color:"#555",lineHeight:1.6}},selData.dayStatus.workingArea)
+          ),
+          selData.dayStatus.dailyNotes&&e('div',{style:{background:"#fafafa",borderRadius:10,padding:"10px 12px"}},
+            e('div',{style:{fontSize:10,color:"#aaa",marginBottom:4}},"📝 Daily Notes"),
+            e('div',{style:{fontSize:12,color:"#555",lineHeight:1.6}},selData.dayStatus.dailyNotes)
+          )
+        )
+      )
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+
+// Service Worker registration
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>

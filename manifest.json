@@ -1,0 +1,22 @@
+{
+  "name": "MyTracker",
+  "short_name": "MyTracker",
+  "description": "Personal Daily Tracker",
+  "start_url": "/mytracker.html",
+  "display": "standalone",
+  "background_color": "#6C63FF",
+  "theme_color": "#6C63FF",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://via.placeholder.com/192/6C63FF/ffffff?text=MT",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/512/6C63FF/ffffff?text=MT",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
