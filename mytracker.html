@@ -47,6 +47,45 @@ window.storage = {
   }
 };
 
+// ── Export / Import ──
+window.exportData = async function() {
+  try {
+    const keys = await window.storage.list();
+    const allKeys = keys?.keys || [];
+    const exportObj = {};
+    for (const k of allKeys) {
+      const v = await window.storage.get(k);
+      if (v?.value) exportObj[k] = v.value;
+    }
+    const json = JSON.stringify(exportObj, null, 2);
+    const blob = new Blob([json], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const date = new Date().toISOString().split('T')[0];
+    a.href = url;
+    a.download = `mytracker-backup-${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch(e) { return false; }
+};
+
+window.importData = async function(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const obj = JSON.parse(e.target.result);
+        for (const [k, v] of Object.entries(obj)) {
+          await window.storage.set(k, v);
+        }
+        resolve(true);
+      } catch { resolve(false); }
+    };
+    reader.readAsText(file);
+  });
+};
+
 // ── App ──
 const {useState, useEffect} = React;
 const _n = new Date();
@@ -150,6 +189,8 @@ function App(){
   const [tab,setTab]=useState(0);
   const [googleOn,setGoogleOn]=useState(false);
   const [syncing,setSyncing]=useState(false);
+  const [showBackup,setShowBackup]=useState(false);
+  const [backupMsg,setBackupMsg]=useState("");
   const [data,setData]=useState(defData());
   const [allData,setAllData]=useState({});
   const [saved,setSaved]=useState(false);
@@ -294,9 +335,8 @@ function App(){
         ),
         e('div',{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}},
           saved&&e('div',{style:{background:"rgba(255,255,255,0.25)",borderRadius:12,padding:"3px 9px",color:"white",fontSize:10,fontWeight:700}},"✓ Saved"),
-          e('button',{onClick:toggleGoogle,style:{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:14,
-            padding:"5px 10px",color:"white",fontSize:10,fontWeight:700,cursor:"pointer"}},
-            syncing?"⏳ Syncing...":googleOn?"🔗 Synced":"🔗 Sync")
+          e('button',{onClick:()=>setShowBackup(true),style:{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:14,
+            padding:"5px 10px",color:"white",fontSize:10,fontWeight:700,cursor:"pointer"}},"💾 Backup")
         )
       )
     ),
@@ -598,6 +638,58 @@ function App(){
             e('div',{style:{fontSize:12,color:"#555",lineHeight:1.6}},selData.dayStatus.dailyNotes)
           )
         )
+      )
+    ),
+
+    // Backup Modal
+    showBackup&&e('div',{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20},onClick:()=>setShowBackup(false)},
+      e('div',{style:{background:"white",borderRadius:24,padding:24,width:"100%",maxWidth:400},
+        onClick:ev=>ev.stopPropagation()},
+        e('div',{style:{fontSize:18,fontWeight:800,color:"#333",marginBottom:6}},"💾 Backup & Restore"),
+        e('div',{style:{fontSize:12,color:"#888",marginBottom:20}},"Apna data export ya import karo"),
+
+        backupMsg&&e('div',{style:{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,
+          padding:"10px 14px",color:"#16a34a",fontSize:12,fontWeight:600,marginBottom:14}},backupMsg),
+
+        e('div',{style:{background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:16,padding:16,marginBottom:12}},
+          e('div',{style:{color:"white",fontSize:14,fontWeight:700,marginBottom:4}},"📤 Export (Backup)"),
+          e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,marginBottom:12}},
+            "Sab data ek JSON file mein save ho jayega"),
+          e('button',{onClick:async()=>{
+            const ok = await window.exportData();
+            setBackupMsg(ok?"✅ Backup file download ho gayi!":"❌ Error aaya, dobara try karo");
+            setTimeout(()=>setBackupMsg(""),3000);
+          },style:{width:"100%",padding:"11px",borderRadius:12,border:"none",
+            background:"white",color:"#6C63FF",fontSize:13,fontWeight:700,cursor:"pointer"}},
+            "⬇️ Download Backup")
+        ),
+
+        e('div',{style:{background:"linear-gradient(135deg,#00C58E,#00a8cc)",borderRadius:16,padding:16,marginBottom:16}},
+          e('div',{style:{color:"white",fontSize:14,fontWeight:700,marginBottom:4}},"📥 Import (Restore)"),
+          e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,marginBottom:12}},
+            "Purana backup file select karo — sab data wapas aa jayega"),
+          e('label',{style:{display:"block",width:"100%",padding:"11px",borderRadius:12,
+            background:"white",color:"#00C58E",fontSize:13,fontWeight:700,cursor:"pointer",textAlign:"center"}},
+            "📂 Select Backup File",
+            e('input',{type:"file",accept:".json",style:{display:"none"},
+              onChange:async(ev)=>{
+                const file = ev.target.files[0];
+                if(!file) return;
+                const ok = await window.importData(file)htmlm
+                if(ok){
+                  setBackupMsg("✅ Data restore ho gaya! App reload ho rahi hai...");
+                  setTimeout(()=>window.location.reload(),1500);
+                } else {
+                  setBackupMsg("❌ File sahi nahi — MyTracker backup select karo");
+                }
+              }})
+          )
+        ),
+
+        e('button',{onClick:()=>setShowBackup(false),style:{width:"100%",padding:"11px",borderRadius:12,
+          border:"none",background:"#f0f0f0",color:"#666",fontSize:13,fontWeight:700,cursor:"pointer"}},
+          "Close")
       )
     )
   );
