@@ -1,23 +1,20 @@
-const CACHE_NAME = 'mytracker-v2';
+const CACHE_NAME = 'mytracker-v3';
 const URLS = [
-  '/Meri-app/mytracker.html',
+  '/Meri-app/mytracker-14.html',
   '/Meri-app/manifest.json',
   '/Meri-app/sw.js',
+  '/Meri-app/index.html',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js'
 ];
 
-// Install — sab files cache karo
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(URLS);
-    })
+    caches.open(CACHE_NAME).then(cache => cache.addAll(URLS))
   );
   self.skipWaiting();
 });
 
-// Activate — purana cache delete karo
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -27,21 +24,18 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch — pehle cache se do, nahi mila to network se
 self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
       return fetch(event.request).then(response => {
-        // Successful response cache mein save karo
         if (response && response.status === 200) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
       }).catch(() => {
-        // Network bhi nahi — cache se do
-        return caches.match('/Meri-app/mytracker.html');
+        return caches.match('/Meri-app/mytracker-14.html');
       });
     })
   );
