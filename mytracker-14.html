@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>MyTracker</title>
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#6C63FF"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="MyTracker"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Segoe UI',system-ui,sans-serif;background:#F4F6FF;min-height:100vh;}
+    input,textarea,button,select{font-family:inherit;}
+    textarea{resize:vertical;}
+    .app{max-width:480px;margin:0 auto;min-height:100vh;position:relative;}
+    input[type=time]{color:#333;background:#fafafa;}
+  </style>
+</head>
+<body>
+<div id="root" class="app"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+// ── Storage ──
+window.storage = {
+  get: async function(key){try{const v=localStorage.getItem(key);return v!==null?{key,value:v}:null;}catch{return null;}},
+  set: async function(key,value){try{localStorage.setItem(key,value);return{key,value};}catch{return null;}},
+  delete: async function(key){try{localStorage.removeItem(key);return{key,deleted:true};}catch{return null;}},
+  list: async function(prefix){try{const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(!prefix||k.startsWith(prefix))keys.push(k);}return{keys};}catch{return{keys:[]};}}
+};
+
+// ── Export/Import ──
+window.exportData=async function(){try{const keys=await window.storage.list();const allKeys=keys?.keys||[];const exportObj={};for(const k of allKeys){const v=await window.storage.get(k);if(v?.value)exportObj[k]=v.value;}const json=JSON.stringify(exportObj,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');const date=new Date().toISOString().split('T')[0];a.href=url;a.download=`mytracker-backup-${date}.json`;a.click();URL.revokeObjectURL(url);return true;}catch(e){return false;}};
+window.importData=async function(file){return new Promise((resolve)=>{const reader=new FileReader();reader.onload=async(e)=>{try{const obj=JSON.parse(e.target.result);for(const[k,v]of Object.entries(obj)){await window.storage.set(k,v);}resolve(true);}catch{resolve(false);}};reader.readAsText(file);});};
+
+const {useState,useEffect,useRef}=React;
+const e=React.createElement;
+const _n=new Date();
+function ds(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+const TODAY=ds(_n);
+const DISPLAY_DATE=_n.toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+const TAB_COLORS=["#6C63FF","#00C58E","#FF6B6B","#f59e0b","#ec4899"];
+const TAB_GRADS=["linear-gradient(135deg,#6C63FF 0%,#a855f7 100%)","linear-gradient(135deg,#00C58E 0%,#00a8cc 100%)","linear-gradient(135deg,#FF6B6B 0%,#feca57 100%)","linear-gradient(135deg,#f59e0b 0%,#ef4444 100%)","linear-gradient(135deg,#ec4899 0%,#8b5cf6 100%)"];
+
+function defData(){
+  return{
+    habits:{
+      walkSteps:"",
+      sleepFrom:"",sleepTo:"",sleepHours:"",
+      nicotineLog:[],
+      noFap:null,noFapStartTime:null,
+      learningMinutes:"",
+      socialMediaTime:"",totalScreenTime:""
+    },
+    income:{salary:"",incentive:"",dividend:"",others:""},
+    expenses:{
+      travelings:[{from:"",to:"",amount:""}],
+      food:{breakfast:"",lunch:"",dinner:"",snacks:"",tea:""},
+      shoppings:[{item:"",amount:""}],
+      adjustment:"",internet:"",
+      petrols:[{note:"",amount:""}],
+      others:""
+    },
+    assets:{bankAccount:"",mutualFunds:"",stock:"",crypto:"",plot:"",runningCash:"",others:""},
+    dayStatus:{workingArea:"",todos:[],reminders:[]},
+  };
+}
+
+function calcSleep(from,to){
+  if(!from||!to)return"";
+  const[fh,fm]=from.split(":").map(Number);
+  const[th,tm]=to.split(":").map(Number);
+  let mins=(th*60+tm)-(fh*60+fm);
+  if(mins<0)mins+=24*60;
+  const h=Math.floor(mins/60),m=mins%60;
+  return`${h}h ${m}m`;
+}
+
+function hScore(d){
+  if(!d?.habits)return 0;
+  const h=d.habits;
+  const sl=parseFloat(h.sleepHours)||0;
+  return[
+    h.noFap===true,
+    parseFloat(h.learningMinutes)>0,
+    parseFloat(h.walkSteps)>0,
+    sl>=6,
+    (h.nicotineLog||[]).length===0,
+    (parseFloat(h.socialMediaTime)||999)<120
+  ].filter(Boolean).length;
+}
+function sColor(s){return s>=5?"#10b981":s>=3?"#f59e0b":s>=1?"#ef4444":"#e5e7eb";}
+
+function Card({title,color,children}){
+  return e('div',{style:{background:"white",borderRadius:16,padding:16,marginBottom:12,boxShadow:"0 2px 12px rgba(0,0,0,0.05)",borderLeft:`4px solid ${color}`}},
+    e('div',{style:{fontSize:13,fontWeight:700,color,marginBottom:12}},title),
+    children);
+}
+function NF({label,value,onChange,icon,color,placeholder,type}){
+  color=color||"#6C63FF";const[f,setF]=useState(false);
+  return e('div',{style:{marginBottom:10}},
+    e('label',{style:{fontSize:11,color:"#888",display:"flex",alignItems:"center",gap:4,marginBottom:4}},e('span',null,icon),label),
+    e('input',{type:type||"number",value,placeholder:placeholder||"0",onChange:ev=>onChange(ev.target.value),onFocus:()=>setF(true),onBlur:()=>setF(false),
+      style:{width:"100%",padding:"9px 12px",borderRadius:10,border:`2px solid ${f?color:"#eee"}`,fontSize:15,fontWeight:600,color:"#333",background:"#fafafa",outline:"none",boxSizing:"border-box",transition:"border-color 0.2s"}}));
+}
+function TF({label,value,onChange,icon,color}){
+  color=color||"#6C63FF";const[f,setF]=useState(false);
+  return e('div',{style:{marginBottom:10}},
+    e('label',{style:{fontSize:11,color:"#888",display:"flex",alignItems:"center",gap:4,marginBottom:4}},e('span',null,icon),label),
+    e('input',{type:"time",value,onChange:ev=>onChange(ev.target.value),onFocus:()=>setF(true),onBlur:()=>setF(false),
+      style:{width:"100%",padding:"9px 12px",borderRadius:10,border:`2px solid ${f?color:"#eee"}`,fontSize:15,fontWeight:600,color:"#333",background:"#fafafa",outline:"none",boxSizing:"border-box"}}));
+}
+function AF({label,value,onChange,icon,color}){
+  color=color||"#00C58E";const[f,setF]=useState(false);
+  return e('div',{style:{marginBottom:10}},
+    e('label',{style:{fontSize:11,color:"#888",display:"flex",alignItems:"center",gap:4,marginBottom:4}},e('span',null,icon),label),
+    e('div',{style:{position:"relative"}},
+      e('span',{style:{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#bbb",fontSize:13}},"₨"),
+      e('input',{type:"number",value,placeholder:"0",onChange:ev=>onChange(ev.target.value),onFocus:()=>setF(true),onBlur:()=>setF(false),
+        style:{width:"100%",padding:"9px 12px 9px 26px",borderRadius:10,border:`2px solid ${f?color:"#eee"}`,fontSize:15,fontWeight:600,color:"#333",background:"#fafafa",outline:"none",boxSizing:"border-box"}})));
+}
+function TG({label,value,onChange,icon}){
+  return e('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",background:"#fafafa",borderRadius:10,marginBottom:10}},
+    e('div',{style:{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"#333"}},e('span',null,icon),label),
+    e('div',{style:{display:"flex",gap:6}},
+      [true,false].map(v=>e('button',{key:String(v),onClick:()=>onChange(v),
+        style:{padding:"5px 13px",borderRadius:8,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.15s",
+          background:value===v?(v?"#10b981":"#ef4444"):"#e8e8e8",color:value===v?"white":"#888"}},v?"Yes":"No"))
+    )
+  );
+}
+
+// ── No Fap Timer ──
+function NoFapTimer({startTime,active}){
+  const[now,setNow]=useState(Date.now());
+  useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t);},[]);
+  if(!active||!startTime)return e('div',{style:{fontSize:12,color:"#aaa",textAlign:"center",padding:"8px 0"}},"Timer not started");
+  const diff=Math.floor((now-startTime)/1000);
+  const days=Math.floor(diff/86400);
+  const hours=Math.floor((diff%86400)/3600);
+  const mins=Math.floor((diff%3600)/60);
+  const secs=diff%60;
+  return e('div',{style:{display:"flex",justifyContent:"center",gap:8,margin:"8px 0"}},
+    [{v:days,l:"Days"},{v:hours,l:"Hours"},{v:mins,l:"Mins"},{v:secs,l:"Secs"}].map(({v,l})=>
+      e('div',{key:l,style:{background:"rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 10px",minWidth:54,textAlign:"center"}},
+        e('div',{style:{color:"white",fontSize:20,fontWeight:800}},String(v).padStart(2,"0")),
+        e('div',{style:{color:"rgba(255,255,255,0.7)",fontSize:9}},l)
+      )
+    )
+  );
+}
+
+// ── Streak Bar ──
+function StreakBar({allData}){
+  const days=[];
+  for(let i=29;i>=0;i--){const d=new Date(_n);d.setDate(d.getDate()-i);days.push(d);}
+  let streak=0;
+  for(let i=0;i<365;i++){const d=new Date(_n);d.setDate(d.getDate()-i);if(hScore(allData[ds(d)])===0)break;streak++;}
+  const weeks=[];
+  for(let i=0;i<days.length;i+=7)weeks.push(days.slice(i,i+7));
+  return e('div',{style:{background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:18,padding:16,marginBottom:14}},
+    e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
+      e('div',{style:{color:"white",fontSize:13,fontWeight:700}},"🔥 Streak"),
+      e('div',{style:{background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 14px",display:"flex",alignItems:"baseline",gap:3}},
+        e('span',{style:{color:"white",fontSize:22,fontWeight:800}},streak),
+        e('span',{style:{color:"rgba(255,255,255,0.7)",fontSize:11}}," days")
+      )
+    ),
+    e('div',{style:{marginBottom:8}},
+      weeks.map((wk,wi)=>e('div',{key:wi,style:{display:"flex",gap:3,marginBottom:3}},
+        wk.map(d=>{
+          const key=ds(d),sc=hScore(allData[key]),isT=key===TODAY,isFut=key>TODAY;
+          const bg=isFut?"rgba(255,255,255,0.05)":allData[key]?sColor(sc):"rgba(255,255,255,0.15)";
+          return e('div',{key,title:key,style:{flex:1,height:22,borderRadius:5,background:bg,
+            border:isT?"2px solid white":"2px solid transparent",
+            display:"flex",alignItems:"center",justifyContent:"center"}},
+            isT&&e('div',{style:{width:5,height:5,borderRadius:"50%",background:"white"}})
+          );
+        })
+      ))
+    ),
+    e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
+      e('div',{style:{fontSize:10,color:"rgba(255,255,255,0.6)"}},"Last 30 days"),
+      e('div',{style:{display:"flex",gap:10}},
+        [{c:"#10b981",l:"5-6"},{c:"#f59e0b",l:"3-4"},{c:"#ef4444",l:"1-2"}].map(s=>
+          e('div',{key:s.l,style:{display:"flex",alignItems:"center",gap:3,fontSize:9,color:"rgba(255,255,255,0.7)"}},
+            e('div',{style:{width:8,height:8,borderRadius:2,background:s.c}}),s.l)
+        )
+      )
+    )
+  );
+}
+
+function App(){
+  const[screen,setScreen]=useState("loading");
+  const[storedPin,setStoredPin]=useState("");
+  const[pinStep,setPinStep]=useState(1);
+  const[firstPin,setFirstPin]=useState("");
+  const[pinCur,setPinCur]=useState("");
+  const[pinErr,setPinErr]=useState("");
+  const[tab,setTab]=useState(0);
+  const[showBackup,setShowBackup]=useState(false);
+  const[backupMsg,setBackupMsg]=useState("");
+  const[data,setData]=useState(defData());
+  const[allData,setAllData]=useState({});
+  const[saved,setSaved]=useState(false);
+  const[calY,setCalY]=useState(_n.getFullYear());
+  const[calM,setCalM]=useState(_n.getMonth());
+  const[selDay,setSelDay]=useState(null);
+  const[nfTick,setNfTick]=useState(0);
+
+  useEffect(()=>{init();},[]);
+
+  async function init(){
+    try{const p=await window.storage.get("app_pin");if(p?.value){setStoredPin(p.value);setScreen("login");}else setScreen("setup");}
+    catch{setScreen("setup");}
+    try{
+      const keys=await window.storage.list("day_");
+      const ad={};
+      for(const k of(keys?.keys||[])){
+        try{const v=await window.storage.get(k);if(v?.value)ad[k.replace("day_","")]=JSON.parse(v.value);}catch{}
+      }
+      setAllData(ad);
+      if(ad[TODAY])setData(mergeData(defData(),ad[TODAY]));
+    }catch{}
+  }
+
+  function mergeData(def,saved){
+    const r=JSON.parse(JSON.stringify(def));
+    if(saved.habits)r.habits={...r.habits,...saved.habits};
+    if(saved.income)r.income={...r.income,...saved.income};
+    if(saved.expenses){
+      r.expenses={...r.expenses,...saved.expenses};
+      if(saved.expenses.travelings)r.expenses.travelings=saved.expenses.travelings;
+      if(saved.expenses.shoppings)r.expenses.shoppings=saved.expenses.shoppings;
+      if(saved.expenses.petrols)r.expenses.petrols=saved.expenses.petrols;
+      if(saved.expenses.food)r.expenses.food={...r.expenses.food,...saved.expenses.food};
+    }
+    if(saved.assets)r.assets={...r.assets,...saved.assets};
+    if(saved.dayStatus){
+      r.dayStatus={...r.dayStatus,...saved.dayStatus};
+      if(saved.dayStatus.todos)r.dayStatus.todos=saved.dayStatus.todos;
+      if(saved.dayStatus.reminders)r.dayStatus.reminders=saved.dayStatus.reminders;
+    }
+    return r;
+  }
+
+  async function saveData(nd){
+    setData(nd);setAllData(prev=>({...prev,[TODAY]:nd}));
+    try{await window.storage.set("day_"+TODAY,JSON.stringify(nd));setSaved(true);setTimeout(()=>setSaved(false),1800);}catch{}
+  }
+  function upd(sec,key,val){saveData({...data,[sec]:{...data[sec],[key]:val}});}
+  function updExp(key,val){saveData({...data,expenses:{...data.expenses,[key]:val}});}
+  function updFood(key,val){saveData({...data,expenses:{...data.expenses,food:{...data.expenses.food,[key]:val}}});}
+  function updHabit(key,val){saveData({...data,habits:{...data.habits,[key]:val}});}
+
+  // Nicotine
+  function addNicotine(){
+    const now=new Date();
+    const timeStr=now.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
+    const log=[...(data.habits.nicotineLog||[]),{time:timeStr,id:Date.now()}];
+    updHabit("nicotineLog",log);
+  }
+  function removeNicotine(id){
+    const log=(data.habits.nicotineLog||[]).filter(x=>x.id!==id);
+    updHabit("nicotineLog",log);
+  }
+
+  // No Fap
+  function toggleNoFap(val){
+    if(val===true){
+      saveData({...data,habits:{...data.habits,noFap:true,noFapStartTime:Date.now()}});
+    } else {
+      saveData({...data,habits:{...data.habits,noFap:false,noFapStartTime:null}});
+    }
+  }
+
+  // Sleep
+  function updSleep(key,val){
+    const habits={...data.habits,[key]:val};
+    if(key==="sleepFrom"||key==="sleepTo"){
+      const from=key==="sleepFrom"?val:data.habits.sleepFrom;
+      const to=key==="sleepTo"?val:data.habits.sleepTo;
+      habits.sleepHours=calcSleep(from,to);
+    }
+    saveData({...data,habits});
+  }
+
+  // PIN
+  function tapDigit(d){
+    setPinErr("");if(pinCur.length>=4)return;
+    const next=pinCur+d;setPinCur(next);
+    if(next.length<4)return;
+    setTimeout(()=>{
+      if(screen==="setup"){
+        if(pinStep===1){setFirstPin(next);setPinCur("");setPinStep(2);}
+        else{if(next===firstPin){window.storage.set("app_pin",next);setStoredPin(next);setPinCur("");setFirstPin("");setPinStep(1);setScreen("main");}
+          else{setPinErr("PINs don't match.");setPinCur("");setFirstPin("");setPinStep(1);}}
+      }else{if(next===storedPin){setPinCur("");setScreen("main");}else{setPinErr("Incorrect PIN!");setPinCur("");}}
+    },140);
+  }
+  function tapBack(){setPinErr("");setPinCur(p=>p.slice(0,-1));}
+
+  // Travels / Shoppings / Petrols
+  function updTravel(i,key,val){const t=[...data.expenses.travelings];t[i]={...t[i],[key]:val};updExp("travelings",t);}
+  function addTravel(){updExp("travelings",[...data.expenses.travelings,{from:"",to:"",amount:""}]);}
+  function removeTravel(i){const t=data.expenses.travelings.filter((_,idx)=>idx!==i);updExp("travelings",t.length?t:[{from:"",to:"",amount:""}]);}
+  function updShop(i,key,val){const t=[...data.expenses.shoppings];t[i]={...t[i],[key]:val};updExp("shoppings",t);}
+  function addShop(){updExp("shoppings",[...data.expenses.shoppings,{item:"",amount:""}]);}
+  function removeShop(i){const t=data.expenses.shoppings.filter((_,idx)=>idx!==i);updExp("shoppings",t.length?t:[{item:"",amount:""}]);}
+  function updPetrol(i,key,val){const t=[...data.expenses.petrols];t[i]={...t[i],[key]:val};updExp("petrols",t);}
+  function addPetrol(){updExp("petrols",[...data.expenses.petrols,{note:"",amount:""}]);}
+  function removePetrol(i){const t=data.expenses.petrols.filter((_,idx)=>idx!==i);updExp("petrols",t.length?t:[{note:"",amount:""}]);}
+
+  // Todos
+  function addTodo(text){
+    if(!text.trim())return;
+    const todos=[...(data.dayStatus.todos||[]),{id:Date.now(),text,done:false}];
+    saveData({...data,dayStatus:{...data.dayStatus,todos}});
+  }
+  function toggleTodo(id){
+    const todos=(data.dayStatus.todos||[]).map(t=>t.id===id?{...t,done:!t.done}:t);
+    saveData({...data,dayStatus:{...data.dayStatus,todos}});
+  }
+  function removeTodo(id){
+    const todos=(data.dayStatus.todos||[]).filter(t=>t.id!==id);
+    saveData({...data,dayStatus:{...data.dayStatus,todos}});
+  }
+
+  // Reminders
+  function addReminder(text,time){
+    if(!text.trim())return;
+    const reminders=[...(data.dayStatus.reminders||[]),{id:Date.now(),text,time,done:false}];
+    saveData({...data,dayStatus:{...data.dayStatus,reminders}});
+  }
+  function removeReminder(id){
+    const reminders=(data.dayStatus.reminders||[]).filter(r=>r.id!==id);
+    saveData({...data,dayStatus:{...data.dayStatus,reminders}});
+  }
+
+  const score=hScore(data);
+  const totInc=Object.values(data.income).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totExp=[
+    ...data.expenses.travelings.map(t=>parseFloat(t.amount)||0),
+    ...Object.values(data.expenses.food).map(v=>parseFloat(v)||0),
+    ...data.expenses.shoppings.map(s=>parseFloat(s.amount)||0),
+    parseFloat(data.expenses.adjustment)||0,
+    parseFloat(data.expenses.internet)||0,
+    ...data.expenses.petrols.map(p=>parseFloat(p.amount)||0),
+    parseFloat(data.expenses.others)||0
+  ].reduce((a,b)=>a+b,0);
+  const totAst=Object.values(data.assets).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totFood=Object.values(data.expenses.food).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totTravel=data.expenses.travelings.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const totShop=data.expenses.shoppings.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const totPetrol=data.expenses.petrols.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+
+  const TABS=[{icon:"🎯",label:"Habits"},{icon:"💰",label:"Finance"},{icon:"📅",label:"Day"},{icon:"📆",label:"Calendar"}];
+
+  // Calendar
+  const WD=["Su","Mo","Tu","We","Th","Fr","Sa"];
+  function getMonthDays(y,m){const fd=new Date(y,m,1).getDay(),dim=new Date(y,m+1,0).getDate();return[...Array(fd).fill(null),...Array.from({length:dim},(_,i)=>new Date(y,m,i+1))];}
+  const calDays=getMonthDays(calY,calM);
+  const calMonthName=new Date(calY,calM,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+  const selData=selDay?allData[selDay]:null;
+
+  // ── LOADING ──
+  if(screen==="loading")return e('div',{style:{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:TAB_GRADS[0]}},e('div',{style:{fontSize:48}},"📊"));
+
+  // ── PIN ──
+  if(screen==="setup"||screen==="login"){
+    const dots=pinCur.length;
+    return e('div',{style:{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,background:"linear-gradient(160deg,#6C63FF 0%,#a855f7 40%,#ec4899 100%)"}},
+      e('div',{style:{marginBottom:24,textAlign:"center"}},
+        e('div',{style:{width:76,height:76,borderRadius:22,background:"rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px",fontSize:36}},"📊"),
+        e('div',{style:{color:"white",fontSize:26,fontWeight:800}},"MyTracker"),
+        e('div',{style:{color:"rgba(255,255,255,0.7)",fontSize:12}},"Personal Daily Tracker")
+      ),
+      e('div',{style:{background:"rgba(255,255,255,0.97)",borderRadius:28,padding:"28px 22px",width:"100%",maxWidth:320,boxShadow:"0 24px 60px rgba(0,0,0,0.25)"}},
+        e('div',{style:{textAlign:"center",marginBottom:6}},
+          e('div',{style:{fontSize:17,fontWeight:700,color:"#222"}},screen==="setup"?(pinStep===1?"🔐 Create PIN":"🔐 Confirm PIN"):"🔐 Enter PIN"),
+          e('div',{style:{fontSize:12,color:"#999",marginTop:3}},screen==="setup"?(pinStep===1?"Choose a 4-digit PIN":"Re-enter to confirm"):"Enter your 4-digit PIN")
+        ),
+        e('div',{style:{display:"flex",justifyContent:"center",gap:12,margin:"18px 0"}},
+          [0,1,2,3].map(i=>e('div',{key:i,style:{width:15,height:15,borderRadius:"50%",background:i<dots?"#6C63FF":"rgba(108,99,255,0.15)",border:`2.5px solid ${i<dots?"#6C63FF":"rgba(108,99,255,0.25)"}`,transition:"all 0.15s",transform:i<dots?"scale(1.15)":"scale(1)"}}))
+        ),
+        pinErr&&e('div',{style:{background:"#fff5f5",border:"1px solid #fed7d7",borderRadius:10,padding:"7px 12px",color:"#e53e3e",fontSize:12,textAlign:"center",marginBottom:10}},pinErr),
+        e('div',{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}},
+          [1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>
+            e('button',{key:i,onClick:()=>d==="⌫"?tapBack():d!==""?tapDigit(String(d)):null,
+              style:{height:54,borderRadius:12,border:"none",fontSize:d==="⌫"?18:20,fontWeight:600,background:d==="⌫"?"#fee2e2":d===""?"transparent":"#f5f5ff",color:d==="⌫"?"#e53e3e":"#333",cursor:d===""?"default":"pointer"}},d)
+          )
+        )
+      )
+    );
+  }
+
+  // ── MAIN ──
+  return e('div',{style:{minHeight:"100vh",background:"#F4F6FF",fontFamily:"'Segoe UI',system-ui,sans-serif",maxWidth:480,margin:"0 auto"}},
+
+    // Header
+    e('div',{style:{background:TAB_GRADS[tab],padding:"18px 18px 50px",borderRadius:"0 0 28px 28px"}},
+      e('div',{style:{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}},
+        e('div',null,
+          e('div',{style:{color:"rgba(255,255,255,0.75)",fontSize:11}},DISPLAY_DATE),
+          e('div',{style:{color:"white",fontSize:21,fontWeight:800,marginTop:2}},TABS[tab].icon+" "+TABS[tab].label)
+        ),
+        e('div',{style:{display:"flex",alignItems:"center",gap:6}},
+          saved&&e('div',{style:{background:"rgba(255,255,255,0.25)",borderRadius:12,padding:"3px 9px",color:"white",fontSize:10,fontWeight:700}},"✓ Saved"),
+          e('button',{onClick:()=>setShowBackup(true),style:{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:14,padding:"5px 10px",color:"white",fontSize:10,fontWeight:700,cursor:"pointer"}},"💾 Backup")
+        )
+      )
+    ),
+
+    // Content
+    e('div',{style:{padding:"0 12px 100px",marginTop:-28}},
+
+      // Finance summary
+      tab===1&&e('div',{style:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:12}},
+        [{l:"Income",v:totInc,c:"#00C58E",i:"💵"},{l:"Expenses",v:totExp,c:"#FF6B6B",i:"💸"},{l:"Savings",v:totInc-totExp,c:totInc-totExp>=0?"#6C63FF":"#ef4444",i:"💾"},{l:"Assets",v:totAst,c:"#a855f7",i:"🏦"}]
+        .map(s=>e('div',{key:s.l,style:{background:"white",borderRadius:14,padding:"10px 12px",boxShadow:"0 2px 10px rgba(0,0,0,0.06)",textAlign:"center"}},
+          e('div',{style:{fontSize:18}},s.i),
+          e('div',{style:{fontSize:10,color:"#999",marginTop:2}},s.l),
+          e('div',{style:{fontSize:13,fontWeight:800,color:s.c,marginTop:1}},"₨"+Math.abs(s.v).toLocaleString())
+        ))
+      ),
+
+      e('div',{style:{background:"white",borderRadius:22,padding:14,boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}},
+
+        // ── HABITS ──
+        tab===0&&e(React.Fragment,null,
+          e(StreakBar,{allData}),
+
+          // Sleep
+          e(Card,{title:"😴 Sleep",color:"#6C63FF"},
+            e('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+              e(TF,{label:"Sleep Time",value:data.habits.sleepFrom,onChange:v=>updSleep("sleepFrom",v),icon:"🌙",color:"#6C63FF"}),
+              e(TF,{label:"Wake Time",value:data.habits.sleepTo,onChange:v=>updSleep("sleepTo",v),icon:"☀️",color:"#6C63FF"})
+            ),
+            data.habits.sleepHours&&e('div',{style:{background:"#f0f0ff",borderRadius:10,padding:"8px 12px",textAlign:"center",fontSize:13,fontWeight:700,color:"#6C63FF"}},
+              "🛏 Total Sleep: "+data.habits.sleepHours)
+          ),
+
+          // Walk
+          e(Card,{title:"🚶 Physical",color:"#10b981"},
+            e(NF,{label:"Walk Steps",value:data.habits.walkSteps,onChange:v=>updHabit("walkSteps",v),icon:"👣",color:"#10b981"})
+          ),
+
+          // No Fap
+          e('div',{style:{background:"linear-gradient(135deg,#f59e0b,#ef4444)",borderRadius:16,padding:16,marginBottom:12}},
+            e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+              e('div',{style:{color:"white",fontSize:13,fontWeight:700}},"💪 No FAP"),
+              e('div',{style:{display:"flex",gap:6}},
+                [true,false].map(v=>e('button',{key:String(v),onClick:()=>toggleNoFap(v),
+                  style:{padding:"5px 14px",borderRadius:8,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",
+                    background:data.habits.noFap===v?"white":"rgba(255,255,255,0.2)",
+                    color:data.habits.noFap===v?(v?"#f59e0b":"#ef4444"):"white"}},v?"Active":"Reset"))
+              )
+            ),
+            e(NoFapTimer,{startTime:data.habits.noFapStartTime,active:data.habits.noFap===true})
+          ),
+
+          // Nicotine
+          e(Card,{title:"🚬 Nicotine Log",color:"#8b5cf6"},
+            e('button',{onClick:addNicotine,style:{width:"100%",padding:"10px",borderRadius:10,border:"none",background:"#8b5cf6",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:10}},
+              "+ Log Cigarette Now"),
+            (data.habits.nicotineLog||[]).length>0&&e('div',null,
+              e('div',{style:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}},
+                (data.habits.nicotineLog||[]).map((n,i)=>
+                  e('div',{key:n.id,style:{background:"#f3e8ff",borderRadius:8,padding:"4px 10px",display:"flex",alignItems:"center",gap:6}},
+                    e('span',{style:{fontSize:12,color:"#6b21a8",fontWeight:600}},`#${i+1} ${n.time}`),
+                    e('button',{onClick:()=>removeNicotine(n.id),style:{background:"none",border:"none",color:"#a855f7",cursor:"pointer",fontSize:14,padding:0}},"×")
+                  )
+                )
+              ),
+              e('div',{style:{background:"#f3e8ff",borderRadius:10,padding:"8px 12px",textAlign:"center",fontSize:13,fontWeight:700,color:"#6b21a8"}},
+                `Total: ${(data.habits.nicotineLog||[]).length} cigarettes today`)
+            ),
+            (data.habits.nicotineLog||[]).length===0&&e('div',{style:{textAlign:"center",color:"#aaa",fontSize:12,padding:"8px 0"}},"No cigarettes logged today ✅")
+          ),
+
+          // Learning
+          e(Card,{title:"📚 Learning",color:"#00C58E"},
+            e(NF,{label:"Learning Time (minutes)",value:data.habits.learningMinutes,onChange:v=>updHabit("learningMinutes",v),icon:"⏱",color:"#00C58E"}),
+            data.habits.learningMinutes&&parseFloat(data.habits.learningMinutes)>0&&
+            e('div',{style:{background:"#f0fdf4",borderRadius:10,padding:"8px 12px",textAlign:"center",fontSize:13,fontWeight:700,color:"#00C58E"}},
+              `📖 ${Math.floor(parseFloat(data.habits.learningMinutes)/60)}h ${parseFloat(data.habits.learningMinutes)%60}m learned today`)
+          ),
+
+          // Screen Time
+          e(Card,{title:"📱 Screen Time",color:"#ec4899"},
+            e(NF,{label:"Social Media (minutes)",value:data.habits.socialMediaTime,onChange:v=>updHabit("socialMediaTime",v),icon:"📲",color:"#ec4899"}),
+            e(NF,{label:"Total Screen Time (minutes)",value:data.habits.totalScreenTime,onChange:v=>updHabit("totalScreenTime",v),icon:"📵",color:"#ec4899"}),
+            (data.habits.socialMediaTime||data.habits.totalScreenTime)&&
+            e('div',{style:{display:"flex",gap:8,marginTop:4}},
+              data.habits.socialMediaTime&&e('div',{style:{flex:1,background:"#fdf2f8",borderRadius:10,padding:"8px",textAlign:"center"}},
+                e('div',{style:{fontSize:11,color:"#ec4899"}},"📲 Social Media"),
+                e('div',{style:{fontSize:14,fontWeight:700,color:"#ec4899"}},data.habits.socialMediaTime+" min")
+              ),
+              data.habits.totalScreenTime&&e('div',{style:{flex:1,background:"#fdf2f8",borderRadius:10,padding:"8px",textAlign:"center"}},
+                e('div',{style:{fontSize:11,color:"#ec4899"}},"📵 Total Screen"),
+                e('div',{style:{fontSize:14,fontWeight:700,color:"#ec4899"}},data.habits.totalScreenTime+" min")
+              )
+            )
+          ),
+
+          // Today Score
+          e('div',{style:{background:"linear-gradient(135deg,#ec4899,#8b5cf6)",borderRadius:16,padding:14}},
+            e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,fontWeight:700,marginBottom:8}},"TODAY'S SCORE"),
+            e('div',{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+              e('div',{style:{fontSize:26,fontWeight:800,color:"white"}},score+"/6"),
+              e('div',{style:{flex:1,height:8,background:"rgba(255,255,255,0.2)",borderRadius:4,overflow:"hidden"}},
+                e('div',{style:{width:`${(score/6)*100}%`,height:"100%",background:"white",borderRadius:4,transition:"width 0.3s"}})
+              )
+            )
+          )
+        ),
+
+        // ── FINANCE ──
+        tab===1&&e(React.Fragment,null,
+          e(Card,{title:"💵 Income",color:"#00C58E"},
+            e(AF,{label:"Salary",value:data.income.salary,onChange:v=>upd("income","salary",v),icon:"🏦",color:"#00C58E"}),
+            e(AF,{label:"Incentive",value:data.income.incentive,onChange:v=>upd("income","incentive",v),icon:"🎁",color:"#00C58E"}),
+            e(AF,{label:"Dividend",value:data.income.dividend,onChange:v=>upd("income","dividend",v),icon:"📈",color:"#00C58E"}),
+            e(AF,{label:"Others",value:data.income.others,onChange:v=>upd("income","others",v),icon:"➕",color:"#00C58E"})
+          ),
+
+          // Traveling
+          e(Card,{title:"🚗 Traveling",color:"#FF6B6B"},
+            data.expenses.travelings.map((t,i)=>
+              e('div',{key:i,style:{background:"#fff5f5",borderRadius:12,padding:10,marginBottom:8}},
+                e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+                  e('div',{style:{fontSize:11,fontWeight:700,color:"#FF6B6B"}},"Trip "+(i+1)),
+                  i>0&&e('button',{onClick:()=>removeTravel(i),style:{background:"#fee2e2",border:"none",borderRadius:6,padding:"2px 8px",color:"#ef4444",fontSize:11,cursor:"pointer"}},"Remove")
+                ),
+                e('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}},
+                  e('div',null,
+                    e('label',{style:{fontSize:10,color:"#888",marginBottom:3,display:"block"}},"🚦 From"),
+                    e('input',{value:t.from,placeholder:"From",onChange:ev=>updTravel(i,"from",ev.target.value),
+                      style:{width:"100%",padding:"7px 10px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white"}})
+                  ),
+                  e('div',null,
+                    e('label',{style:{fontSize:10,color:"#888",marginBottom:3,display:"block"}},"🏁 To"),
+                    e('input',{value:t.to,placeholder:"To",onChange:ev=>updTravel(i,"to",ev.target.value),
+                      style:{width:"100%",padding:"7px 10px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white"}})
+                  )
+                ),
+                e('div',{style:{position:"relative"}},
+                  e('span',{style:{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#bbb",fontSize:12}},"₨"),
+                  e('input',{type:"number",value:t.amount,placeholder:"Amount",onChange:ev=>updTravel(i,"amount",ev.target.value),
+                    style:{width:"100%",padding:"7px 10px 7px 24px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white"}})
+                )
+              )
+            ),
+            e('button',{onClick:addTravel,style:{width:"100%",padding:"9px",borderRadius:10,border:"2px dashed #FF6B6B",background:"transparent",color:"#FF6B6B",fontSize:12,fontWeight:700,cursor:"pointer"}},
+              "+ Add Another Trip"),
+            totTravel>0&&e('div',{style:{marginTop:8,background:"#FF6B6B",borderRadius:10,padding:"8px 12px",textAlign:"center",color:"white",fontSize:13,fontWeight:700}},
+              "Total Travel: ₨"+totTravel.toLocaleString())
+          ),
+
+          // Food
+          e(Card,{title:"🍔 Food",color:"#f59e0b"},
+            [{key:"breakfast",icon:"🌅",label:"Breakfast"},{key:"lunch",icon:"☀️",label:"Lunch"},
+             {key:"dinner",icon:"🌙",label:"Dinner"},{key:"snacks",icon:"🍿",label:"Snacks"},{key:"tea",icon:"☕",label:"Tea/Drinks"}]
+            .map(f=>e(AF,{key:f.key,label:f.label,value:data.expenses.food[f.key],onChange:v=>updFood(f.key,v),icon:f.icon,color:"#f59e0b"})),
+            totFood>0&&e('div',{style:{background:"#f59e0b",borderRadius:10,padding:"8px 12px",textAlign:"center",color:"white",fontSize:13,fontWeight:700}},
+              "Total Food: ₨"+totFood.toLocaleString())
+          ),
+
+          // Shopping
+          e(Card,{title:"🛍️ Shopping",color:"#a855f7"},
+            data.expenses.shoppings.map((s,i)=>
+              e('div',{key:i,style:{background:"#faf5ff",borderRadius:12,padding:10,marginBottom:8}},
+                e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+                  e('div',{style:{fontSize:11,fontWeight:700,color:"#a855f7"}},"Item "+(i+1)),
+                  i>0&&e('button',{onClick:()=>removeShop(i),style:{background:"#f3e8ff",border:"none",borderRadius:6,padding:"2px 8px",color:"#a855f7",fontSize:11,cursor:"pointer"}},"Remove")
+                ),
+                e('input',{value:s.item,placeholder:"Item name (e.g. Shirt, Grocery)",onChange:ev=>updShop(i,"item",ev.target.value),
+                  style:{width:"100%",padding:"7px 10px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white",marginBottom:6}}),
+                e('div',{style:{position:"relative"}},
+                  e('span',{style:{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#bbb",fontSize:12}},"₨"),
+                  e('input',{type:"number",value:s.amount,placeholder:"Amount",onChange:ev=>updShop(i,"amount",ev.target.value),
+                    style:{width:"100%",padding:"7px 10px 7px 24px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white"}})
+                )
+              )
+            ),
+            e('button',{onClick:addShop,style:{width:"100%",padding:"9px",borderRadius:10,border:"2px dashed #a855f7",background:"transparent",color:"#a855f7",fontSize:12,fontWeight:700,cursor:"pointer"}},
+              "+ Add Another Item"),
+            totShop>0&&e('div',{style:{marginTop:8,background:"#a855f7",borderRadius:10,padding:"8px 12px",textAlign:"center",color:"white",fontSize:13,fontWeight:700}},
+              "Total Shopping: ₨"+totShop.toLocaleString())
+          ),
+
+          // Petrol
+          e(Card,{title:"⛽ Petrol",color:"#06b6d4"},
+            data.expenses.petrols.map((p,i)=>
+              e('div',{key:i,style:{background:"#f0fdff",borderRadius:12,padding:10,marginBottom:8}},
+                e('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+                  e('div',{style:{fontSize:11,fontWeight:700,color:"#06b6d4"}},"Fill "+(i+1)),
+                  i>0&&e('button',{onClick:()=>removePetrol(i),style:{background:"#cffafe",border:"none",borderRadius:6,padding:"2px 8px",color:"#06b6d4",fontSize:11,cursor:"pointer"}},"Remove")
+                ),
+                e('input',{value:p.note,placeholder:"Note (e.g. Morning fill)",onChange:ev=>updPetrol(i,"note",ev.target.value),
+                  style:{width:"100%",padding:"7px 10px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white",marginBottom:6}}),
+                e('div',{style:{position:"relative"}},
+                  e('span',{style:{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#bbb",fontSize:12}},"₨"),
+                  e('input',{type:"number",value:p.amount,placeholder:"Amount",onChange:ev=>updPetrol(i,"amount",ev.target.value),
+                    style:{width:"100%",padding:"7px 10px 7px 24px",borderRadius:8,border:"2px solid #eee",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box",background:"white"}})
+                )
+              )
+            ),
+            e('button',{onClick:addPetrol,style:{width:"100%",padding:"9px",borderRadius:10,border:"2px dashed #06b6d4",background:"transparent",color:"#06b6d4",fontSize:12,fontWeight:700,cursor:"pointer"}},
+              "+ Add Another Fill"),
+            totPetrol>0&&e('div',{style:{marginTop:8,background:"#06b6d4",borderRadius:10,padding:"8px 12px",textAlign:"center",color:"white",fontSize:13,fontWeight:700}},
+              "Total Petrol: ₨"+totPetrol.toLocaleString())
+          ),
+
+          e(Card,{title:"🔧 Other Expenses",color:"#64748b"},
+            e(AF,{label:"Adjustment",value:data.expenses.adjustment,onChange:v=>updExp("adjustment",v),icon:"🔄",color:"#64748b"}),
+            e(AF,{label:"Internet",value:data.expenses.internet,onChange:v=>updExp("internet",v),icon:"🌐",color:"#64748b"}),
+            e(AF,{label:"Others",value:data.expenses.others,onChange:v=>updExp("others",v),icon:"➕",color:"#64748b"})
+          ),
+
+          // Assets
+          e(Card,{title:"🏦 Assets",color:"#6C63FF"},
+            e(AF,{label:"Bank Account",value:data.assets.bankAccount,onChange:v=>upd("assets","bankAccount",v),icon:"🏦",color:"#6C63FF"}),
+            e(AF,{label:"Mutual Funds",value:data.assets.mutualFunds,onChange:v=>upd("assets","mutualFunds",v),icon:"📊",color:"#6C63FF"}),
+            e(AF,{label:"Stock",value:data.assets.stock,onChange:v=>upd("assets","stock",v),icon:"📈",color:"#6C63FF"}),
+            e(AF,{label:"Crypto",value:data.assets.crypto,onChange:v=>upd("assets","crypto",v),icon:"₿",color:"#6C63FF"}),
+            e(AF,{label:"Plot",value:data.assets.plot,onChange:v=>upd("assets","plot",v),icon:"🏗️",color:"#6C63FF"}),
+            e(AF,{label:"Running Cash",value:data.assets.runningCash,onChange:v=>upd("assets","runningCash",v),icon:"💵",color:"#6C63FF"}),
+            e(AF,{label:"Others",value:data.assets.others,onChange:v=>upd("assets","others",v),icon:"➕",color:"#6C63FF"}),
+            totAst>0&&e('div',{style:{marginTop:8,background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:12,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+              e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:600}},"💎 Total Assets"),
+              e('div',{style:{color:"white",fontSize:18,fontWeight:800}},"₨"+totAst.toLocaleString())
+            )
+          )
+        ),
+
+        // ── DAY STATUS ──
+        tab===2&&e(React.Fragment,null,
+
+          // Todo List
+          e('div',{style:{marginBottom:12}},
+            e('div',{style:{fontSize:13,fontWeight:700,color:"#333",marginBottom:10}},"✅ To-Do List"),
+            e(TodoInput,{onAdd:addTodo}),
+            (data.dayStatus.todos||[]).length>0&&e('div',null,
+              (data.dayStatus.todos||[]).map(todo=>
+                e('div',{key:todo.id,style:{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:todo.done?"#f0fdf4":"white",borderRadius:12,marginBottom:6,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",border:`1px solid ${todo.done?"#86efac":"#eee"}`}},
+                  e('button',{onClick:()=>toggleTodo(todo.id),style:{width:22,height:22,borderRadius:6,border:`2px solid ${todo.done?"#10b981":"#ddd"}`,background:todo.done?"#10b981":"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},
+                    todo.done&&e('span',{style:{color:"white",fontSize:12,fontWeight:700}},"✓")
+                  ),
+                  e('span',{style:{flex:1,fontSize:13,color:todo.done?"#aaa":"#333",textDecoration:todo.done?"line-through":"none"}},todo.text),
+                  e('button',{onClick:()=>removeTodo(todo.id),style:{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:16,padding:0}},"×")
+                )
+              ),
+              e('div',{style:{fontSize:11,color:"#aaa",textAlign:"center",marginTop:6}},
+                `${(data.dayStatus.todos||[]).filter(t=>t.done).length}/${(data.dayStatus.todos||[]).length} completed`)
+            )
+          ),
+
+          // Reminders
+          e('div',{style:{marginBottom:12}},
+            e('div',{style:{fontSize:13,fontWeight:700,color:"#333",marginBottom:10}},"⏰ Reminders"),
+            e(ReminderInput,{onAdd:addReminder}),
+            (data.dayStatus.reminders||[]).length>0&&e('div',null,
+              (data.dayStatus.reminders||[]).map(r=>
+                e('div',{key:r.id,style:{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"#fffbeb",borderRadius:12,marginBottom:6,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",border:"1px solid #fde68a"}},
+                  e('span',{style:{fontSize:18}},"⏰"),
+                  e('div',{style:{flex:1}},
+                    e('div',{style:{fontSize:13,fontWeight:600,color:"#333"}},r.text),
+                    r.time&&e('div',{style:{fontSize:11,color:"#f59e0b",marginTop:2}},"🕐 "+r.time)
+                  ),
+                  e('button',{onClick:()=>removeReminder(r.id),style:{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:16,padding:0}},"×")
+                )
+              )
+            )
+          ),
+
+          // Working Area
+          e('div',{style:{marginBottom:12}},
+            e('div',{style:{fontSize:13,fontWeight:700,color:"#333",marginBottom:10}},"🏢 Working Area"),
+            e('textarea',{value:data.dayStatus.workingArea,onChange:ev=>saveData({...data,dayStatus:{...data.dayStatus,workingArea:ev.target.value}}),
+              placeholder:"Tasks completed, meetings attended, progress made today...",rows:6,
+              style:{width:"100%",borderRadius:12,border:"2px solid #eee",padding:"12px",fontSize:14,lineHeight:1.7,color:"#333",background:"#fafafa",resize:"vertical",outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}),
+            data.dayStatus.workingArea&&e('div',{style:{marginTop:6,display:"flex",justifyContent:"flex-end"}},
+              e('div',{style:{fontSize:11,color:"#aaa"}},data.dayStatus.workingArea.trim().split(/\s+/).filter(Boolean).length+" words")
+            )
+          )
+        ),
+
+        // ── CALENDAR ──
+        tab===3&&e(React.Fragment,null,
+          e('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}},
+            e('button',{onClick:()=>{let m=calM-1,y=calY;if(m<0){m=11;y--;}setCalM(m);setCalY(y);},
+              style:{width:36,height:36,borderRadius:10,border:"none",background:"#f0f0ff",color:"#6C63FF",fontSize:18,fontWeight:800,cursor:"pointer"}},"‹"),
+            e('div',{style:{fontWeight:700,fontSize:15,color:"#333"}},calMonthName),
+            e('button',{onClick:()=>{let m=calM+1,y=calY;if(m>11){m=0;y++;}setCalM(m);setCalY(y);},
+              style:{width:36,height:36,borderRadius:10,border:"none",background:"#f0f0ff",color:"#6C63FF",fontSize:18,fontWeight:800,cursor:"pointer"}},"›")
+          ),
+          e('div',{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:4}},
+            WD.map(d=>e('div',{key:d,style:{textAlign:"center",fontSize:10,fontWeight:700,color:"#aaa",padding:"3px 0"}},d))
+          ),
+          e('div',{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}},
+            calDays.map((d,i)=>{
+              if(!d)return e('div',{key:i});
+              const key=ds(d),dd=allData[key],sc=hScore(dd);
+              const isT=key===TODAY,isFut=key>TODAY;
+              const hasFin=dd&&(Object.values(dd.income||{}).some(v=>parseFloat(v)>0));
+              const hasNote=dd&&(dd.dayStatus?.workingArea);
+              return e('button',{key,onClick:()=>dd&&!isFut&&setSelDay(key),
+                style:{aspectRatio:"1",borderRadius:10,border:"none",background:isFut?"#f9fafb":dd?sColor(sc)+"22":"white",
+                  cursor:dd&&!isFut?"pointer":"default",display:"flex",flexDirection:"column",alignItems:"center",
+                  justifyContent:"center",padding:2,boxShadow:"0 1px 4px rgba(0,0,0,0.06)",outline:isT?"2.5px solid #6C63FF":"none"}},
+                e('div',{style:{fontSize:11,fontWeight:isT?800:600,color:isT?"#6C63FF":isFut?"#d1d5db":"#333"}},d.getDate()),
+                dd&&!isFut&&e('div',{style:{width:5,height:5,borderRadius:"50%",background:sColor(sc),marginTop:1}})
+              );
+            })
+          ),
+          // Month stats
+          (()=>{
+            const ms=`${calY}-${String(calM+1).padStart(2,"0")}`;
+            const mk=Object.keys(allData).filter(k=>k.startsWith(ms));
+            if(!mk.length)return e('div',{style:{marginTop:12,padding:14,background:"#fafafa",borderRadius:14,textAlign:"center",color:"#aaa",fontSize:13}},"No data for this month yet.");
+            const gd=mk.filter(k=>hScore(allData[k])>=5).length;
+            const mi=mk.reduce((s,k)=>s+Object.values(allData[k].income||{}).reduce((a,v)=>a+(parseFloat(v)||0),0),0);
+            const me=mk.reduce((s,k)=>{
+              const d=allData[k];if(!d?.expenses)return s;
+              const travels=(d.expenses.travelings||[]).reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+              const food=Object.values(d.expenses.food||{}).reduce((a,v)=>a+(parseFloat(v)||0),0);
+              const shops=(d.expenses.shoppings||[]).reduce((a,sh)=>a+(parseFloat(sh.amount)||0),0);
+              const petrols=(d.expenses.petrols||[]).reduce((a,p)=>a+(parseFloat(p.amount)||0),0);
+              return s+travels+food+shops+petrols+(parseFloat(d.expenses.adjustment)||0)+(parseFloat(d.expenses.internet)||0)+(parseFloat(d.expenses.others)||0);
+            },0);
+            return e('div',{style:{marginTop:12,background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:16,padding:14}},
+              e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,fontWeight:700,marginBottom:10}},"📊 MONTH STATS"),
+              e('div',{style:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}},
+                [{l:"Days Tracked",v:mk.length,i:"📅"},{l:"Great Days",v:gd,i:"⭐"},
+                 {l:"Month Income",v:"₨"+mi.toLocaleString(),i:"💵"},{l:"Month Expenses",v:"₨"+me.toLocaleString(),i:"💸"}]
+                .map(s=>e('div',{key:s.l,style:{background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"9px 12px"}},
+                  e('div',{style:{fontSize:16}},s.i),
+                  e('div',{style:{color:"white",fontSize:14,fontWeight:800,marginTop:2}},s.v),
+                  e('div',{style:{color:"rgba(255,255,255,0.65)",fontSize:10}},s.l)
+                ))
+              )
+            );
+          })()
+        )
+      )
+    ),
+
+    // Bottom Nav
+    e('div',{style:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"white",borderTop:"1px solid #f0f0f0",display:"flex",padding:"8px 0 16px",boxShadow:"0 -4px 20px rgba(0,0,0,0.07)"}},
+      TABS.map((t,i)=>e('button',{key:i,onClick:()=>setTab(i),style:{flex:1,border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 0"}},
+        e('div',{style:{fontSize:19,opacity:tab===i?1:0.4,transform:tab===i?"scale(1.15)":"scale(1)",transition:"all 0.2s"}},t.icon),
+        e('div',{style:{fontSize:9,fontWeight:700,color:tab===i?TAB_COLORS[i]:"#bbb"}},t.label),
+        tab===i&&e('div',{style:{width:4,height:4,borderRadius:"50%",background:TAB_COLORS[i]}})
+      ))
+    ),
+
+    // Day Detail Modal
+    selDay&&selData&&e('div',{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"},onClick:()=>setSelDay(null)},
+      e('div',{style:{background:"white",borderRadius:"24px 24px 0 0",padding:24,width:"100%",maxWidth:480,maxHeight:"78vh",overflowY:"auto"},onClick:ev=>ev.stopPropagation()},
+        e('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
+          e('div',null,
+            e('div',{style:{fontSize:11,color:"#aaa"}},new Date(selDay+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})),
+            e('div',{style:{fontSize:18,fontWeight:800,color:"#333",marginTop:2}},"Day Summary")
+          ),
+          e('button',{onClick:()=>setSelDay(null),style:{background:"#f0f0f0",border:"none",borderRadius:20,width:32,height:32,cursor:"pointer",fontSize:16}},"×")
+        ),
+        e('div',{style:{background:sColor(hScore(selData))+"18",border:`2px solid ${sColor(hScore(selData))}`,borderRadius:14,padding:14,marginBottom:12}},
+          e('div',{style:{fontSize:11,color:"#666",marginBottom:4}},"🎯 Habit Score"),
+          e('div',{style:{fontSize:24,fontWeight:800,color:sColor(hScore(selData))}},hScore(selData)+"/6")
+        )
+      )
+    ),
+
+    // Backup Modal
+    showBackup&&e('div',{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20},onClick:()=>setShowBackup(false)},
+      e('div',{style:{background:"white",borderRadius:24,padding:24,width:"100%",maxWidth:400},onClick:ev=>ev.stopPropagation()},
+        e('div',{style:{fontSize:18,fontWeight:800,color:"#333",marginBottom:6}},"💾 Backup & Restore"),
+        e('div',{style:{fontSize:12,color:"#888",marginBottom:16}},"Export ya import karo apna data"),
+        backupMsg&&e('div',{style:{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"10px 14px",color:"#16a34a",fontSize:12,fontWeight:600,marginBottom:14}},backupMsg),
+        e('div',{style:{background:"linear-gradient(135deg,#6C63FF,#a855f7)",borderRadius:16,padding:16,marginBottom:12}},
+          e('div',{style:{color:"white",fontSize:14,fontWeight:700,marginBottom:4}},"📤 Export (Backup)"),
+          e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,marginBottom:12}},"Sab data JSON file mein save hoga"),
+          e('button',{onClick:async()=>{const ok=await window.exportData();setBackupMsg(ok?"✅ Backup download ho gayi!":"❌ Error aaya");setTimeout(()=>setBackupMsg(""),3000);},
+            style:{width:"100%",padding:"11px",borderRadius:12,border:"none",background:"white",color:"#6C63FF",fontSize:13,fontWeight:700,cursor:"pointer"}},"⬇️ Download Backup")
+        ),
+        e('div',{style:{background:"linear-gradient(135deg,#00C58E,#00a8cc)",borderRadius:16,padding:16,marginBottom:16}},
+          e('div',{style:{color:"white",fontSize:14,fontWeight:700,marginBottom:4}},"📥 Import (Restore)"),
+          e('div',{style:{color:"rgba(255,255,255,0.8)",fontSize:11,marginBottom:12}},"Backup file select karo — data wapas aa jayega"),
+          e('label',{style:{display:"block",width:"100%",padding:"11px",borderRadius:12,background:"white",color:"#00C58E",fontSize:13,fontWeight:700,cursor:"pointer",textAlign:"center"}},
+            "📂 Select Backup File",
+            e('input',{type:"file",accept:".json",style:{display:"none"},onChange:async(ev)=>{
+              const file=ev.target.files[0];if(!file)return;
+              const ok=await window.importData(file);
+              if(ok){setBackupMsg("✅ Restore ho gaya! Reload ho rahi hai...");setTimeout(()=>window.location.reload(),1500);}
+              else setBackupMsg("❌ File sahi nahi hai");
+            }})
+          )
+        ),
+        e('button',{onClick:()=>setShowBackup(false),style:{width:"100%",padding:"11px",borderRadius:12,border:"none",background:"#f0f0f0",color:"#666",fontSize:13,fontWeight:700,cursor:"pointer"}},"Close")
+      )
+    )
+  );
+}
+
+// ── Todo Input Component ──
+function TodoInput({onAdd}){
+  const[val,setVal]=useState("");
+  return e('div',{style:{display:"flex",gap:8,marginBottom:10}},
+    e('input',{value:val,onChange:ev=>setVal(ev.target.value),placeholder:"Add a task...",
+      onKeyDown:ev=>{if(ev.key==="Enter"&&val.trim()){onAdd(val);setVal("");}},
+      style:{flex:1,padding:"10px 12px",borderRadius:10,border:"2px solid #eee",fontSize:13,outline:"none",boxSizing:"border-box"}}),
+    e('button',{onClick:()=>{if(val.trim()){onAdd(val);setVal("");}},
+      style:{padding:"10px 14px",borderRadius:10,border:"none",background:"#6C63FF",color:"white",fontSize:13,fontWeight:700,cursor:"pointer"}},"+")
+  );
+}
+
+// ── Reminder Input Component ──
+function ReminderInput({onAdd}){
+  const[val,setVal]=useState("");
+  const[time,setTime]=useState("");
+  return e('div',{style:{background:"#fffbeb",borderRadius:12,padding:12,marginBottom:10}},
+    e('div',{style:{display:"flex",gap:8,marginBottom:8}},
+      e('input',{value:val,onChange:ev=>setVal(ev.target.value),placeholder:"Reminder text...",
+        style:{flex:1,padding:"9px 12px",borderRadius:10,border:"2px solid #fde68a",fontSize:13,outline:"none",boxSizing:"border-box",background:"white"}}),
+      e('input',{type:"time",value:time,onChange:ev=>setTime(ev.target.value),
+        style:{width:100,padding:"9px 8px",borderRadius:10,border:"2px solid #fde68a",fontSize:13,outline:"none",background:"white"}})
+    ),
+    e('button',{onClick:()=>{if(val.trim()){onAdd(val,time);setVal("");setTime("");}},
+      style:{width:"100%",padding:"9px",borderRadius:10,border:"none",background:"#f59e0b",color:"white",fontSize:12,fontWeight:700,cursor:"pointer"}},
+      "+ Add Reminder")
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+</script>
+</body>
+</html>
