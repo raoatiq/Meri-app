@@ -1,42 +1,40 @@
-const CACHE_NAME = 'mytracker-v3';
-const URLS = [
-  '/Meri-app/mytracker-14.html',
-  '/Meri-app/manifest.json',
-  '/Meri-app/sw.js',
-  '/Meri-app/index.html',
-  'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js'
-];
+const CACHE = 'mt-v4';
 
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(URLS))
-  );
+self.addEventListener('install', e => {
   self.skipWaiting();
+  e.waitUntil(
+    caches.open(CACHE).then(c => 
+      Promise.allSettled([
+        c.add('/Meri-app/mytracker-14.html'),
+        c.add('/Meri-app/manifest.json'),
+        c.add('/Meri-app/index.html'),
+        c.add('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js'),
+        c.add('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js')
+      ])
+    )
+  );
 });
 
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(ks => 
+      Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))
     )
   );
   self.clients.claim();
 });
 
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        if (response && response.status === 200) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+self.addEventListener('fetch', e => {
+  e.respondWith(
+    caches.match(e.request, {ignoreSearch: true}).then(r => {
+      if(r) return r;
+      return fetch(e.request).then(res => {
+        if(res && res.status === 200 && res.type !== 'opaque'){
+          const clone = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
         }
-        return response;
-      }).catch(() => {
-        return caches.match('/Meri-app/mytracker-14.html');
-      });
+        return res;
+      }).catch(() => caches.match('/Meri-app/mytracker-14.html', {ignoreSearch: true}));
     })
   );
 });
